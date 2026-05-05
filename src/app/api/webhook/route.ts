@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { useStore } from '@/store/useStore';
 import { Message } from '@/types';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
@@ -56,107 +57,101 @@ async function saveChatToDB(chat: { id: string; phone: string; name: string; las
   }
 }
 
-async function updateChatAiStatusInDB(chatId: string, aiEnabled: boolean) {
-  try {
-    await fetch('/api/db', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'updateChatAiStatus',
-        chatId,
-        chat: { aiEnabled },
-      }),
-    });
-  } catch (e) {
-    console.error('Error updating AI status in DB:', e);
-  }
-}
-
-interface WHAPIMessage {
-  id?: string;
-  from_me?: boolean;
-  type?: string;
-  chat_id?: string;
-  timestamp?: number;
-  text?: { body?: string };
-  from?: string;
-  from_name?: string;
-}
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log('Webhook raw body:', JSON.stringify(body, null, 2).slice(0, 1000));
     
-    const messages: WHAPIMessage[] = body.messages || [];
-    
-    if (!messages || messages.length === 0) {
-      return NextResponse.json({ error: 'No messages found' }, { status: 400 });
+    let messages: any[] = [];
+    let phone = '';
+    let messageContent = '';
+
+    // WHAPI documentation format
+    if (body.messages && Array.isArray(body.messages)) {
+      messages = body.messages;
+      const msg = messages[0];
+      
+      // Ignore messages from ourselves (the bot)
+      if (msg.from_me === true) {
+        console.log('Ignoring message sent by the bot');
+        return NextResponse.json({ success: true, ignored: true });
+      }
+
+      phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+      messageContent = msg.text?.body || '';
+
+      if (!messageContent && msg.type !== 'text') {
+         console.log(`Skipping non-text message of type: ${msg.type}`);
+         return NextResponse.json({ success: true, skipped: 'non-text' });
+      }
+    } 
+    // Fallback format
+    else {
+       console.log('Unsupported payload structure');
+       return NextResponse.json({ error: 'Unsupported format' }, { status: 400 });
     }
 
-    const msg = messages[0];
-    const phone = msg.from || msg.chat_id?.replace('@s.whatsapp.net', '').replace('@c.us', '') || '';
-    const messageContent = msg.text?.body || '';
-    const timestamp = msg.timestamp || Math.floor(Date.now() / 1000);
-
     if (!phone || !messageContent) {
-      return NextResponse.json({ error: 'Missing phone or content' }, { status: 400 });
+      console.log('Missing phone or content in payload');
+      return NextResponse.json({ error: 'Missing data' }, { status: 400 });
     }
 
     const chatId = phone.replace(/\D/g, '').slice(-10);
-    console.log('New message from:', phone, 'content:', messageContent);
+    console.log(`Processing incoming message from ${phone} (chatId: ${chatId})`);
 
     const message: Message = {
-      id: `msg_${Date.now()}`,
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
       chatId,
       content: messageContent,
       sender: 'user',
-      timestamp: timestamp * 1000,
+      timestamp: Date.now(),
       status: 'delivered',
     };
 
-    const dbResponse = await fetch(`/api/db?action=getChats`);
-    const { chats } = await dbResponse.json();
-    
+    const store = useStore.getState();
     let aiEnabled = true;
-    if (chats && chats[chatId]) {
-      aiEnabled = chats[chatId].aiEnabled !== false;
-    }
-
-    if (!chats || !chats[chatId]) {
+    
+    // Check if chat exists and get AI status
+    const existingChat = store.chats.find(c => c.id === chatId);
+    if (existingChat) {
+      aiEnabled = existingChat.aiEnabled;
+    } else {
+      // Create new chat
       const newChat = {
         id: chatId,
         phone: phone,
-        name: msg.from_name || '',
+        name: messages[0]?.from_name || '',
         lastMessage: messageContent,
-        lastMessageTime: message.timestamp,
+        lastMessageTime: Date.now(),
         unreadCount: 1,
         aiEnabled: true,
       };
+      
+      store.setChats([...store.chats, newChat as any]);
       await saveChatToDB(newChat);
       console.log('Created new chat:', chatId);
     }
     
+    // Save the incoming message
+    store.addMessage(chatId, message);
     await saveMessageToDB(chatId, message);
-    console.log('Saved message to Firebase');
-
+    
+    // Trigger AI response if enabled
     if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
       messageCount.count++;
       const delay = getRandomDelay();
-      console.log('AI enabled, responding in', delay, 'ms');
+      console.log(`AI enabled, scheduling response in ${Math.round(delay/1000)}s`);
       
       setTimeout(async () => {
         try {
-          const messagesRes = await fetch(`/api/db?action=getMessages&chatId=${chatId}`);
-          const { messages: chatMessages } = await messagesRes.json();
+          const chatMessages = store.messages[chatId] || [];
           
-          const historyText = (chatMessages || [])
+          const historyText = chatMessages
             .slice(-10)
-            .map((m: Message) => 
-              `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`
-            )
+            .map((m: Message) => `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`)
             .join('\n');
 
-          const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente. 
+          const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente de NOVA TECH AI. 
 Responde de manera profesional, breve y útil en máximo 2 párrafos.
 
 Historial:
@@ -164,7 +159,7 @@ ${historyText}
 
 Nuevo mensaje: ${messageContent}`;
 
-          console.log('Calling Gemini AI...');
+          console.log('Calling Gemini API...');
 
           const aiResponse = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
@@ -181,13 +176,18 @@ Nuevo mensaje: ${messageContent}`;
             }
           );
 
+          if (!aiResponse.ok) {
+             console.error('Gemini API Error:', await aiResponse.text());
+             return;
+          }
+
           const aiData = await aiResponse.json();
           const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
 
           if (aiText) {
-            console.log('Sending AI response:', aiText.substring(0, 50));
+            console.log('Sending AI response via WHAPI...');
             
-            await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
+            const whapiRes = await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${WHAPI_TOKEN}`,
@@ -195,10 +195,15 @@ Nuevo mensaje: ${messageContent}`;
               },
               body: JSON.stringify({
                 messaging_product: 'whatsapp',
-                to: phone,
+                to: phone, // using the full phone/chat_id
                 text: { body: aiText },
               }),
             });
+
+            if (!whapiRes.ok) {
+               console.error('WHAPI Send Error:', await whapiRes.text());
+               return;
+            }
 
             const aiMsg: Message = {
               id: `ai_${Date.now()}`,
@@ -208,18 +213,21 @@ Nuevo mensaje: ${messageContent}`;
               timestamp: Date.now(),
               status: 'sent',
             };
+            store.addMessage(chatId, aiMsg);
             await saveMessageToDB(chatId, aiMsg);
-            console.log('AI response saved to Firebase');
+            console.log('AI response sent and saved');
           }
         } catch (e) {
-          console.error('AI error:', e);
+          console.error('AI Processing Error:', e);
         }
       }, delay);
+    } else {
+       console.log(`Not responding. aiEnabled:${aiEnabled}, hasApiKey:${!!GOOGLE_API_KEY}, hasWhapiToken:${!!WHAPI_TOKEN}`);
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Webhook processing error:', error);
     return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }
