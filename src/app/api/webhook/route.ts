@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { useStore } from '@/store/useStore';
 import { Message } from '@/types';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
@@ -25,6 +24,54 @@ function getRandomDelay(): number {
   return Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS) + MIN_DELAY_MS;
 }
 
+async function saveMessageToDB(chatId: string, message: Message) {
+  try {
+    await fetch('/api/db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'saveMessage',
+        chatId,
+        message,
+        chat: { unreadCount: 1 },
+      }),
+    });
+  } catch (e) {
+    console.error('Error saving to DB:', e);
+  }
+}
+
+async function saveChatToDB(chat: { id: string; phone: string; name: string; lastMessage: string; lastMessageTime: number; unreadCount: number; aiEnabled: boolean }) {
+  try {
+    await fetch('/api/db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'saveChat',
+        chat,
+      }),
+    });
+  } catch (e) {
+    console.error('Error saving chat to DB:', e);
+  }
+}
+
+async function updateChatAiStatusInDB(chatId: string, aiEnabled: boolean) {
+  try {
+    await fetch('/api/db', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'updateChatAiStatus',
+        chatId,
+        chat: { aiEnabled },
+      }),
+    });
+  } catch (e) {
+    console.error('Error updating AI status in DB:', e);
+  }
+}
+
 interface WHAPIMessage {
   id?: string;
   from_me?: boolean;
@@ -40,16 +87,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    console.log('Webhook received, keys:', Object.keys(body));
-    
     const messages: WHAPIMessage[] = body.messages || [];
     
     if (!messages || messages.length === 0) {
-      console.log('No messages in payload');
-      return NextResponse.json(
-        { error: 'No messages found', body: body },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'No messages found' }, { status: 400 });
     }
 
     const msg = messages[0];
@@ -58,15 +99,11 @@ export async function POST(request: NextRequest) {
     const timestamp = msg.timestamp || Math.floor(Date.now() / 1000);
 
     if (!phone || !messageContent) {
-      console.log('Missing phone or content. msg:', msg);
-      return NextResponse.json(
-        { error: 'Missing phone or content', msg: msg },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing phone or content' }, { status: 400 });
     }
 
     const chatId = phone.replace(/\D/g, '').slice(-10);
-    console.log('Message from:', phone, 'chatId:', chatId, 'content:', messageContent);
+    console.log('New message from:', phone, 'content:', messageContent);
 
     const message: Message = {
       id: `msg_${Date.now()}`,
@@ -77,43 +114,42 @@ export async function POST(request: NextRequest) {
       status: 'delivered',
     };
 
-    const store = useStore.getState();
+    const dbResponse = await fetch(`/api/db?action=getChats`);
+    const { chats } = await dbResponse.json();
     
-    let aiEnabled = false;
-    const existingChat = store.chats.find(c => c.id === chatId);
-    if (existingChat) {
-      aiEnabled = existingChat.aiEnabled;
+    let aiEnabled = true;
+    if (chats && chats[chatId]) {
+      aiEnabled = chats[chatId].aiEnabled !== false;
     }
 
-    if (!existingChat) {
-      store.setChats([
-        ...store.chats,
-        {
-          id: chatId,
-          phone: phone,
-          name: msg.from_name || '',
-          lastMessage: messageContent,
-          lastMessageTime: message.timestamp,
-          unreadCount: 1,
-          aiEnabled: true,
-        }
-      ]);
+    if (!chats || !chats[chatId]) {
+      const newChat = {
+        id: chatId,
+        phone: phone,
+        name: msg.from_name || '',
+        lastMessage: messageContent,
+        lastMessageTime: message.timestamp,
+        unreadCount: 1,
+        aiEnabled: true,
+      };
+      await saveChatToDB(newChat);
       console.log('Created new chat:', chatId);
     }
     
-    store.addMessage(chatId, message);
-    console.log('Saved message to store');
+    await saveMessageToDB(chatId, message);
+    console.log('Saved message to Firebase');
 
     if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
       messageCount.count++;
       const delay = getRandomDelay();
-      console.log('AI enabled, scheduling response in', delay, 'ms');
-      
-      const chatMessages = store.messages[chatId] || [];
+      console.log('AI enabled, responding in', delay, 'ms');
       
       setTimeout(async () => {
         try {
-          const historyText = chatMessages
+          const messagesRes = await fetch(`/api/db?action=getMessages&chatId=${chatId}`);
+          const { messages: chatMessages } = await messagesRes.json();
+          
+          const historyText = (chatMessages || [])
             .slice(-10)
             .map((m: Message) => 
               `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`
@@ -128,7 +164,7 @@ ${historyText}
 
 Nuevo mensaje: ${messageContent}`;
 
-          console.log('Calling Gemini...');
+          console.log('Calling Gemini AI...');
 
           const aiResponse = await fetch(
             `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
@@ -149,7 +185,7 @@ Nuevo mensaje: ${messageContent}`;
           const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
 
           if (aiText) {
-            console.log('Sending AI response:', aiText.substring(0, 100));
+            console.log('Sending AI response:', aiText.substring(0, 50));
             
             await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
               method: 'POST',
@@ -172,8 +208,8 @@ Nuevo mensaje: ${messageContent}`;
               timestamp: Date.now(),
               status: 'sent',
             };
-            store.addMessage(chatId, aiMsg);
-            console.log('AI response sent');
+            await saveMessageToDB(chatId, aiMsg);
+            console.log('AI response saved to Firebase');
           }
         } catch (e) {
           console.error('AI error:', e);
@@ -181,13 +217,10 @@ Nuevo mensaje: ${messageContent}`;
       }, delay);
     }
 
-    return NextResponse.json({ success: true, phone, content: messageContent });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error:', error);
-    return NextResponse.json(
-      { error: 'Internal error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
   }
 }
 

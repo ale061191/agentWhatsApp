@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import { Send, MoreVertical, Bot, Paperclip, Smile, Phone, Video, Settings } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
+import { Message } from '@/types';
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString('es-ES', {
@@ -22,13 +23,13 @@ function getInitials(name: string): string {
 }
 
 export default function ChatArea() {
-  const { chats, messages, selectedChatId, addMessage, updateChatAiStatus } = useStore();
+  const { chats, messages, selectedChatId, addMessage, updateChatAiStatus, messages: allMessages, loadFromDB } = useStore();
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [showSettings, setShowSettings] = useState(false);
 
   const selectedChat = chats.find(c => c.id === selectedChatId);
-  const chatMessages = selectedChatId ? messages[selectedChatId] || [] : [];
+  const chatMessages = selectedChatId ? allMessages[selectedChatId] || [] : [];
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

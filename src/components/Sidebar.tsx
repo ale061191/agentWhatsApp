@@ -1,7 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Search, MoreVertical, Bot } from 'lucide-react';
+import { Bot, Search } from 'lucide-react';
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -28,7 +29,12 @@ function getInitials(name: string): string {
 }
 
 export default function Sidebar() {
-  const { chats, selectedChatId, setSelectedChat } = useStore();
+  const { chats, selectedChatId, setSelectedChat, isLoading, loadFromDB } = useStore();
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    loadFromDB().then(() => setLoading(false));
+  }, [loadFromDB]);
 
   return (
     <div className="w-[400px] h-screen glass flex flex-col">
@@ -51,7 +57,13 @@ export default function Sidebar() {
       </div>
 
       <div className="flex-1 overflow-y-auto py-2">
-        {chats.length === 0 ? (
+        {loading || isLoading ? (
+          <div className="p-8 px-6 text-center text-gray-500 text-sm">
+            <div className="glass-card p-6 rounded-xl">
+              <p>Cargando...</p>
+            </div>
+          </div>
+        ) : chats.length === 0 ? (
           <div className="p-8 px-6 text-center text-gray-500 text-sm">
             <div className="glass-card p-6 rounded-xl">
               <p>No hay conversaciones aún</p>
