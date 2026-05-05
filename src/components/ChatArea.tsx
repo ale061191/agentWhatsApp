@@ -182,13 +182,10 @@ export default function ChatArea() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="glass p-[12px_16px] border-t border-[rgba(37,211,102,0.2)]">
+      <div className="glass p-[8px_12px] border-t border-[rgba(37,211,102,0.2)]">
         <div className="flex items-center gap-[8px]">
-          <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all">
+          <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all shrink-0">
             <Paperclip className="w-6 h-6 text-gray-400" />
-          </button>
-          <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all">
-            <Smile className="w-6 h-6 text-gray-400" />
           </button>
           <input
             type="text"
@@ -196,12 +193,14 @@ export default function ChatArea() {
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Escribe un mensaje..."
-            className="flex-1 px-[16px] py-[10px] bg-[#1f252d] text-white text-[15px] rounded-[30px] placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366]"
+            className="flex-1 px-[14px] py-[10px] bg-[#1f252d] text-white text-[15px] placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366]"
+            style={{ borderRadius: '8px', padding: '10px 14px' }}
           />
           <button
             onClick={handleSend}
             disabled={!inputValue.trim()}
-            className="w-[40px] h-[40px] bg-[#00a884] text-white rounded-full hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center"
+            className="w-[40px] h-[40px] bg-[#00a884] text-white rounded-full hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center shrink-0"
+            style={{ marginRight: '12px', marginLeft: '8px' }}
           >
             <Send className="w-5 h-5" />
           </button>
