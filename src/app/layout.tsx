@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Roboto } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"] });
+const roboto = Roboto({ 
+  weight: ["300", "400", "500", "700"],
+  subsets: ["latin"] 
+});
 
 export const metadata: Metadata = {
-  title: "Agente WhatsApp",
-  description: "Panel de atención al cliente",
+  title: "NOVA TECH AI - Agente WhatsApp",
+  description: "Asistente de atención al cliente con IA",
 };
 
 export default function RootLayout({
@@ -16,7 +19,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body className={inter.className}>{children}</body>
+      <body className={roboto.className}>{children}</body>
     </html>
   );
 }

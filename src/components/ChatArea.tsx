@@ -80,8 +80,8 @@ export default function ChatArea() {
       <div className="flex-1 flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at center, rgba(37,211,102,0.1) 0%, #0d0d0d 70%)' }}>
         <div className="text-center">
           <div className="glass-card p-10 rounded-2xl neon-glow mb-6">
-            <div className="text-6xl mb-4">⚡</div>
-            <h2 className="text-2xl font-bold text-white mb-2">Voltaje Agent</h2>
+            <Bot className="w-20 h-20 mx-auto text-[#39ff14] mb-4" />
+            <h2 className="text-2xl font-bold text-white mb-2">NOVA TECH AI</h2>
             <p className="text-[#25d366]">Asistente Inteligente</p>
           </div>
           <div className="glass p-4 rounded-xl">
@@ -134,9 +134,9 @@ export default function ChatArea() {
       {showSettings && (
         <div className="glass p-4 border-b border-[rgba(37,211,102,0.2)]">
           <div className="glass-card p-4 rounded-xl">
-            <h3 className="text-[#25d366] font-bold mb-3">Configuración</h3>
+            <h3 className="text-[#25d366] font-bold mb-3">Configuración NOVA TECH AI</h3>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-gray-400">Estado del Agent</span>
+              <span className="text-sm text-gray-400">Estado del Asistente</span>
               <span className={`text-sm font-bold ${selectedChat?.aiEnabled ? 'text-[#39ff14]' : 'text-red-500'}`}>
                 {selectedChat?.aiEnabled ? 'Activo' : 'Desactivado'}
               </span>
