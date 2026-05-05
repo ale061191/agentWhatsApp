@@ -21,17 +21,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const response = await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
+    const response = await fetch(`${WHAPI_BASE_URL}/messages/text`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${WHAPI_TOKEN}`,
         'Content-Type': 'application/json',
+        'Accept': 'application/json'
       },
       body: JSON.stringify({
-        messaging_product: 'whatsapp',
         to: to,
-        text: { body: text },
-      } as WhatsAppMessage),
+        body: text,
+      }),
     });
 
     const data = await response.json();

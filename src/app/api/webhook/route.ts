@@ -164,16 +164,16 @@ Nuevo mensaje: ${messageContent}`;
           if (aiText) {
             console.log('Sending AI response via WHAPI...');
             
-            const whapiRes = await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
+            const whapiRes = await fetch(`${WHAPI_BASE_URL}/messages/text`, {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${WHAPI_TOKEN}`,
                 'Content-Type': 'application/json',
+                'Accept': 'application/json'
               },
               body: JSON.stringify({
-                messaging_product: 'whatsapp',
                 to: phone, // using the full phone/chat_id
-                text: { body: aiText },
+                body: aiText,
               }),
             });
 
