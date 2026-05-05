@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Bot, Search, Settings, BookOpen } from 'lucide-react';
+import { Bot, Search, Settings, BookOpen, CreditCard } from 'lucide-react';
 import SystemPromptModal from './SystemPromptModal';
+import CasosReembolsoModal from './CasosReembolsoModal';
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -34,6 +35,7 @@ export default function Sidebar() {
   const subscribeToDB = (useStore as any).getState().subscribeToDB;
   const [loading, setLoading] = useState(true);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showCasosReembolso, setShowCasosReembolso] = useState(false);
 
   useEffect(() => {
     if (subscribeToDB) {
@@ -130,11 +132,23 @@ export default function Sidebar() {
           <BookOpen className="w-4 h-4" />
           <span>System Prompt</span>
         </button>
+        <button 
+          onClick={() => setShowCasosReembolso(true)}
+          className="w-full mt-2 flex items-center justify-center gap-2 px-4 py-2 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-lg transition-colors text-sm text-gray-400 hover:text-white"
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>Casos Reembolso</span>
+        </button>
       </div>
       
       <SystemPromptModal 
         isOpen={showSystemPrompt} 
         onClose={() => setShowSystemPrompt(false)} 
+      />
+      
+      <CasosReembolsoModal 
+        isOpen={showCasosReembolso} 
+        onClose={() => setShowCasosReembolso(false)} 
       />
     </div>
   );
