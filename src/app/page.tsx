@@ -1,14 +1,13 @@
-"use client";
+'use client';
 
-import { useState } from "react";
-import Sidebar from "@/components/Sidebar";
-import ChatArea from "@/components/ChatArea";
+import Sidebar from '@/components/Sidebar';
+import ChatArea from '@/components/ChatArea';
 
 export default function Home() {
   return (
-    <div className="flex h-screen overflow-hidden">
+    <main className="flex h-screen overflow-hidden" style={{ background: 'linear-gradient(135deg, #0a0a0a 0%, #111111 50%, #0a0a0a 100%)' }}>
       <Sidebar />
       <ChatArea />
-    </div>
+    </main>
   );
 }

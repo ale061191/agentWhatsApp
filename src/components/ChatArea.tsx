@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '@/store/useStore';
-import { Send, MoreVertical, Bot, Paperclip, Smile, Mic, Image } from 'lucide-react';
+import { Send, MoreVertical, Bot, Paperclip, Smile, Phone, Video, Settings } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 
 function formatTime(timestamp: number): string {
@@ -10,6 +10,15 @@ function formatTime(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .map(n => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 export default function ChatArea() {
@@ -68,65 +77,96 @@ export default function ChatArea() {
 
   if (!selectedChatId) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-[#efeae2]">
-        <div className="text-center text-gray-500">
-          <div className="text-4xl mb-4">💬</div>
-          <p className="text-lg">Selecciona una conversación</p>
-          <p className="text-sm mt-2">para comenzar a chatear</p>
+      <div className="flex-1 flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at center, rgba(37,211,102,0.1) 0%, #0d0d0d 70%)' }}>
+        <div className="text-center">
+          <div className="glass-card p-10 rounded-2xl neon-glow mb-6">
+            <div className="text-6xl mb-4">⚡</div>
+            <h2 className="text-2xl font-bold text-white mb-2">Voltaje Agent</h2>
+            <p className="text-[#25d366]">Asistente Inteligente</p>
+          </div>
+          <div className="glass p-4 rounded-xl">
+            <p className="text-gray-400">Selecciona una conversación</p>
+            <p className="text-xs text-gray-600 mt-2">para comenzar a chatear</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[#efeae2]">
-      <div className="bg-[#fefefe] p-3 border-b border-[#e0e0e0] flex items-center justify-between">
+    <div className="flex-1 flex flex-col" style={{ background: 'radial-gradient(ellipse at top, rgba(37,211,102,0.05) 0%, #0d0d0d 50%)' }}>
+      <div className="glass p-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-[#25d366] flex items-center justify-center text-white text-sm font-medium">
-            {selectedChat?.name?.slice(0, 2).toUpperCase() || selectedChat?.phone.slice(-2)}
+          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-sm font-bold neon-glow">
+            {selectedChat?.name ? getInitials(selectedChat.name) : selectedChat?.phone.slice(-2)}
           </div>
           <div>
-            <h2 className="font-medium text-sm text-[#333]">{selectedChat?.name || selectedChat?.phone}</h2>
-            <p className="text-xs text-gray-400">{selectedChat?.phone}</p>
+            <h2 className="font-bold text-white">{selectedChat?.name || selectedChat?.phone}</h2>
+            <p className="text-xs text-[#25d366]">{selectedChat?.phone}</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Bot className={`w-4 h-4 ${selectedChat?.aiEnabled ? 'text-[#25d366]' : 'text-gray-400'}`} />
-            <span className="text-xs text-gray-500">AI</span>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 glass px-3 py-1.5 rounded-full">
+            <Bot className={`w-4 h-4 ${selectedChat?.aiEnabled ? 'text-[#39ff14]' : 'text-gray-500'}`} />
+            <span className="text-xs text-gray-400">AI</span>
             <Switch
               checked={selectedChat?.aiEnabled || false}
               onCheckedChange={(checked) => updateChatAiStatus(selectedChatId, checked)}
+              className="data-[state=checked]:bg-[#39ff14]"
             />
           </div>
-          <button
+          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
+            <Phone className="w-5 h-5 text-gray-400" />
+          </button>
+          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
+            <Video className="w-5 h-5 text-gray-400" />
+          </button>
+          <button 
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 hover:bg-[#f0f0f0] rounded-full transition-colors"
+            className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all"
           >
-            <MoreVertical className="w-5 h-5 text-gray-600" />
+            <Settings className="w-5 h-5 text-gray-400" />
           </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-2">
+      {showSettings && (
+        <div className="glass p-4 border-b border-[rgba(37,211,102,0.2)]">
+          <div className="glass-card p-4 rounded-xl">
+            <h3 className="text-[#25d366] font-bold mb-3">Configuración</h3>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm text-gray-400">Estado del Agent</span>
+              <span className={`text-sm font-bold ${selectedChat?.aiEnabled ? 'text-[#39ff14]' : 'text-red-500'}`}>
+                {selectedChat?.aiEnabled ? 'Activo' : 'Desactivado'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-gray-400">Mensajes hoy</span>
+              <span className="text-sm text-white">{chatMessages.length}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {chatMessages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.sender === 'agent' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[70%] px-3 py-2 rounded-lg text-sm ${
+              className={`max-w-[70%] px-4 py-3 rounded-2xl text-sm ${
                 msg.sender === 'agent'
-                  ? 'bg-[#d9fdd3] rounded-br-none'
-                  : 'bg-[#ffffff] rounded-bl-none'
+                  ? 'glass-card text-white rounded-br-none'
+                  : 'glass text-white rounded-bl-none'
               }`}
             >
-              <p className="text-[#333]">{msg.content}</p>
-              <div className="flex items-center justify-end gap-1 mt-1">
-                <span className="text-[10px] text-gray-400">{formatTime(msg.timestamp)}</span>
+              <p>{msg.content}</p>
+              <div className="flex items-center justify-end gap-1 mt-2">
+                <span className="text-[10px] text-gray-500">{formatTime(msg.timestamp)}</span>
                 {msg.sender === 'agent' && (
-                  <span className="text-[10px] text-gray-400">
+                  <span className="text-[10px] text-[#25d366]">
                     {msg.status === 'delivered' ? '✓✓' : '✓'}
                   </span>
                 )}
@@ -137,13 +177,13 @@ export default function ChatArea() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="bg-[#fefefe] p-3 border-t border-[#e0e0e0]">
-        <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-[#f0f0f0] rounded-full transition-colors">
-            <Paperclip className="w-5 h-5 text-gray-500" />
+      <div className="glass p-4 border-t border-[rgba(37,211,102,0.2)]">
+        <div className="flex items-center gap-3">
+          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
+            <Paperclip className="w-5 h-5 text-gray-400" />
           </button>
-          <button className="p-2 hover:bg-[#f0f0f0] rounded-full transition-colors">
-            <Smile className="w-5 h-5 text-gray-500" />
+          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
+            <Smile className="w-5 h-5 text-gray-400" />
           </button>
           <input
             type="text"
@@ -151,12 +191,12 @@ export default function ChatArea() {
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Escribe un mensaje..."
-            className="flex-1 px-4 py-2 bg-[#f0f2f5] border-none rounded-full text-sm focus:outline-none focus:ring-1 focus:ring-[#25d366]"
+            className="flex-1 px-4 py-3 glass-card rounded-full text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366]"
           />
           <button
             onClick={handleSend}
             disabled={!inputValue.trim()}
-            className="p-2 bg-[#25d366] text-white rounded-full hover:bg-[#20bd5a] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="p-3 bg-gradient-to-r from-[#25d366] to-[#39ff14] text-black rounded-full hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all neon-glow"
           >
             <Send className="w-5 h-5" />
           </button>

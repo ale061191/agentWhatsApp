@@ -1,14 +1,18 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #128c7e;
-  --sidebar-bg: #fefefe;
-  --chat-bg: #efeae2;
-  --message-sent: #d9fdd3;
-  --message-received: #ffffff;
+  --background: #0a0a0a;
+  --foreground: #ffffff;
+  --sidebar-bg: rgba(15, 15, 15, 0.8);
+  --chat-bg: #0d0d0d;
+  --message-sent: #25d366;
+  --message-received: rgba(30, 30, 30, 0.7);
   --accent: #25d366;
-  --border: #e0e0e0;
+  --accent-neon: #39ff14;
+  --border: rgba(37, 211, 102, 0.3);
+  --glass: rgba(20, 20, 20, 0.6);
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
 }
 
 * {
@@ -20,8 +24,35 @@
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background: var(--chat-bg);
-  color: #333;
+  color: var(--text-primary);
   overflow: hidden;
+}
+
+.glass {
+  background: var(--glass);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+}
+
+.glass-card {
+  background: linear-gradient(135deg, rgba(37, 211, 102, 0.1) 0%, rgba(20, 20, 20, 0.8) 100%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+.neon-glow {
+  box-shadow: 0 0 10px var(--accent), 0 0 20px var(--accent), 0 0 30px var(--accent);
+}
+
+.neon-text {
+  text-shadow: 0 0 5px var(--accent), 0 0 10px var(--accent), 0 0 20px var(--accent);
+}
+
+.neon-border {
+  box-shadow: 0 0 5px var(--accent), inset 0 0 5px rgba(37, 211, 102, 0.1);
 }
 
 ::-webkit-scrollbar {
@@ -33,10 +64,27 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #bbb;
+  background: var(--accent);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #999;
+  background: var(--accent-neon);
+}
+
+input, button {
+  font-family: inherit;
+}
+
+input:focus, button:focus {
+  outline: none;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px var(--accent); }
+  50% { box-shadow: 0 0 20px var(--accent), 0 0 30px var(--accent); }
+}
+
+.animate-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
 }
