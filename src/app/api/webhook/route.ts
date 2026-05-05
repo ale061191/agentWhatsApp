@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { useStore } from '@/store/useStore';
 import { Message } from '@/types';
+import { getFirebaseDB } from '@/lib/firebase';
+import { ref, set, get, child, update } from 'firebase/database';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
@@ -23,40 +24,6 @@ function shouldRespond(): boolean {
 
 function getRandomDelay(): number {
   return Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS) + MIN_DELAY_MS;
-}
-
-async function saveMessageToDB(chatId: string, message: Message) {
-  try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    await fetch(`${appUrl}/api/db`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'saveMessage',
-        chatId,
-        message,
-        chat: { unreadCount: 1 },
-      }),
-    });
-  } catch (e) {
-    console.error('Error saving to DB:', e);
-  }
-}
-
-async function saveChatToDB(chat: { id: string; phone: string; name: string; lastMessage: string; lastMessageTime: number; unreadCount: number; aiEnabled: boolean }) {
-  try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    await fetch(`${appUrl}/api/db`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'saveChat',
-        chat,
-      }),
-    });
-  } catch (e) {
-    console.error('Error saving chat to DB:', e);
-  }
 }
 
 export async function POST(request: NextRequest) {
@@ -110,50 +77,62 @@ export async function POST(request: NextRequest) {
       status: 'delivered',
     };
 
-    const store = useStore.getState();
-    let aiEnabled = true;
+    // Initialize Firebase
+    const db = getFirebaseDB();
+    const dbRef = ref(db);
     
-    // Check if chat exists and get AI status
-    const existingChat = store.chats.find(c => c.id === chatId);
-    if (existingChat) {
-      aiEnabled = existingChat.aiEnabled;
+    // Check if chat exists
+    const chatSnapshot = await get(child(dbRef, `chats/${chatId}`));
+    let chatData = chatSnapshot.val();
+    let aiEnabled = true;
+
+    if (chatData) {
+      aiEnabled = chatData.aiEnabled !== false; // default true if not set
+      // Update existing chat
+      await update(ref(db, `chats/${chatId}`), {
+        lastMessage: messageContent,
+        lastMessageTime: Date.now(),
+        unreadCount: (chatData.unreadCount || 0) + 1
+      });
     } else {
       // Create new chat
-      const newChat = {
+      chatData = {
         id: chatId,
         phone: phone,
-        name: messages[0]?.from_name || '',
+        name: messages[0]?.from_name || phone,
         lastMessage: messageContent,
         lastMessageTime: Date.now(),
         unreadCount: 1,
         aiEnabled: true,
       };
-      
-      store.setChats([...store.chats, newChat as any]);
-      await saveChatToDB(newChat);
+      await set(ref(db, `chats/${chatId}`), chatData);
       console.log('Created new chat:', chatId);
     }
     
     // Save the incoming message
-    store.addMessage(chatId, message);
-    await saveMessageToDB(chatId, message);
+    await set(ref(db, `messages/${chatId}/${message.id}`), message);
+    console.log('Message saved to DB');
     
     // Trigger AI response if enabled
     if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
       messageCount.count++;
-      const delay = getRandomDelay();
-      console.log(`AI enabled, scheduling response in ${Math.round(delay/1000)}s`);
       
-      setTimeout(async () => {
-        try {
-          const chatMessages = store.messages[chatId] || [];
-          
-          const historyText = chatMessages
-            .slice(-10)
-            .map((m: Message) => `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`)
-            .join('\n');
+      // FIRE AND FORGET - Don't wait for setTimeout in serverless, do it immediately but don't block
+      // Vercel serverless functions die when the response is sent. We must do the API calls BEFORE returning.
+      
+      try {
+        console.log('Calling Gemini API directly...');
+        // We fetch the history for context
+        const historySnap = await get(child(dbRef, `messages/${chatId}`));
+        const messagesObj = historySnap.val() || {};
+        const chatMessages = Object.values(messagesObj).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
+        
+        const historyText = chatMessages
+          .slice(-10)
+          .map((m: Message) => `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`)
+          .join('\n');
 
-          const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente de NOVA TECH AI. 
+        const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente de NOVA TECH AI. 
 Responde de manera profesional, breve y útil en máximo 2 párrafos.
 
 Historial:
@@ -161,28 +140,24 @@ ${historyText}
 
 Nuevo mensaje: ${messageContent}`;
 
-          console.log('Calling Gemini API...');
-
-          const aiResponse = await fetch(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                contents: [{ parts: [{ text: prompt }] }],
-                generationConfig: {
-                  temperature: 0.7,
-                  maxOutputTokens: 500,
-                },
-              }),
-            }
-          );
-
-          if (!aiResponse.ok) {
-             console.error('Gemini API Error:', await aiResponse.text());
-             return;
+        const aiResponse = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 500,
+              },
+            }),
           }
+        );
 
+        if (!aiResponse.ok) {
+           console.error('Gemini API Error:', await aiResponse.text());
+        } else {
           const aiData = await aiResponse.json();
           const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
 
@@ -204,25 +179,29 @@ Nuevo mensaje: ${messageContent}`;
 
             if (!whapiRes.ok) {
                console.error('WHAPI Send Error:', await whapiRes.text());
-               return;
+            } else {
+              const aiMsg: Message = {
+                id: `ai_${Date.now()}`,
+                chatId,
+                content: aiText,
+                sender: 'agent',
+                timestamp: Date.now(),
+                status: 'sent',
+              };
+              
+              // Save AI message to DB
+              await set(ref(db, `messages/${chatId}/${aiMsg.id}`), aiMsg);
+              await update(ref(db, `chats/${chatId}`), {
+                lastMessage: aiText,
+                lastMessageTime: Date.now()
+              });
+              console.log('AI response sent and saved');
             }
-
-            const aiMsg: Message = {
-              id: `ai_${Date.now()}`,
-              chatId,
-              content: aiText,
-              sender: 'agent',
-              timestamp: Date.now(),
-              status: 'sent',
-            };
-            store.addMessage(chatId, aiMsg);
-            await saveMessageToDB(chatId, aiMsg);
-            console.log('AI response sent and saved');
           }
-        } catch (e) {
-          console.error('AI Processing Error:', e);
         }
-      }, delay);
+      } catch (e) {
+        console.error('AI Processing Error:', e);
+      }
     } else {
        console.log(`Not responding. aiEnabled:${aiEnabled}, hasApiKey:${!!GOOGLE_API_KEY}, hasWhapiToken:${!!WHAPI_TOKEN}`);
     }
