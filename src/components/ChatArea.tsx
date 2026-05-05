@@ -78,10 +78,14 @@ export default function ChatArea() {
   if (!selectedChatId) {
     return (
       <div className="flex-1 flex items-center justify-center" style={{ background: 'radial-gradient(ellipse at center, rgba(37,211,102,0.1) 0%, #0d0d0d 70%)' }}>
-        <div className="text-center">
-          <Bot className="w-24 h-24 mx-auto text-[#39ff14] mb-6" />
-          <h2 className="text-3xl font-bold text-white mb-2">NOVA TECH AI</h2>
-          <p className="text-[#25d366] text-lg">Asistente Inteligente</p>
+        <div className="text-center flex flex-col items-center">
+          <div className="flex items-center gap-4 mb-2">
+            <Bot className="w-16 h-16 text-[#39ff14]" />
+            <div>
+              <h2 className="text-3xl font-bold text-white">NOVA TECH AI</h2>
+              <p className="text-[#25d366] text-lg">Asistente Inteligente</p>
+            </div>
+          </div>
         </div>
       </div>
     );
