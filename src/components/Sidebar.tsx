@@ -57,7 +57,7 @@ export default function Sidebar() {
           <input
             type="text"
             placeholder="Buscar conversaciones..."
-            className="w-full pl-16 pr-4 py-2 bg-transparent text-white text-[15px] placeholder-gray-500 focus:outline-none"
+            className="w-full pl-28 pr-4 py-2 bg-transparent text-white text-[15px] placeholder-gray-500 focus:outline-none"
             style={{ borderRadius: '8px' }}
           />
         </div>
