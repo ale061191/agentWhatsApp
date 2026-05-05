@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { AppState, Chat, Message } from '@/types';
+import { getFirebaseDB } from '@/lib/firebase';
+import { ref, onValue, set as setFirebase, update as updateFirebase } from 'firebase/database';
 
-export const useStore = create<AppState>((set, get) => ({
+export const useStore = create<AppState & { subscribeToDB: () => void }>((set, get) => ({
   chats: [],
   messages: {},
   selectedChatId: null,
@@ -14,114 +16,84 @@ export const useStore = create<AppState>((set, get) => ({
   setSelectedChat: (chatId: string | null) => {
     set({ selectedChatId: chatId });
     if (chatId) {
-      const { chats, updateChat } = get();
-      const chat = chats.find(c => c.id === chatId);
-      if (chat) {
-        updateChat(chatId, { unreadCount: 0 });
-      }
+      const db = getFirebaseDB();
+      updateFirebase(ref(db, `chats/${chatId}`), { unreadCount: 0 }).catch(console.error);
     }
   },
 
   addMessage: (chatId: string, message: Message) => set((state) => {
-    const chatMessages = state.messages[chatId] || [];
-    const updatedMessages = { ...state.messages, [chatId]: [...chatMessages, message] };
-
-    const updatedChats = state.chats.map((chat) => {
-      if (chat.id === chatId) {
-        return {
-          ...chat,
-          lastMessage: message.content,
-          lastMessageTime: message.timestamp,
-          unreadCount: message.sender === 'user' && state.selectedChatId !== chatId
-            ? chat.unreadCount + 1
-            : chat.unreadCount,
-        };
-      }
-      return chat;
-    });
-
-    fetch('/api/db', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'saveMessage',
-        chatId,
-        message,
-        chat: {},
-      }),
+    // This is primarily for local optimistic UI updates when sending messages manually
+    const db = getFirebaseDB();
+    setFirebase(ref(db, `messages/${chatId}/${message.id}`), message).catch(console.error);
+    
+    // Also update last message in chat optimistically
+    updateFirebase(ref(db, `chats/${chatId}`), {
+      lastMessage: message.content,
+      lastMessageTime: message.timestamp,
     }).catch(console.error);
-
-    return { messages: updatedMessages, chats: updatedChats };
+    
+    return state; // The actual state update will come from the Firebase listener
   }),
 
   updateChatAiStatus: (chatId: string, enabled: boolean) => {
-    set((state) => ({
-      chats: state.chats.map((chat) =>
-        chat.id === chatId ? { ...chat, aiEnabled: enabled } : chat
-      ),
-    }));
-
-    fetch('/api/db', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'updateChatAiStatus',
-        chatId,
-        chat: { aiEnabled: enabled },
-      }),
-    }).catch(console.error);
+    const db = getFirebaseDB();
+    updateFirebase(ref(db, `chats/${chatId}`), { aiEnabled: enabled }).catch(console.error);
+    // State will update via listener
   },
 
-  setChatName: (chatId: string, name: string) => set((state) => ({
-    chats: state.chats.map((chat) =>
-      chat.id === chatId ? { ...chat, name } : chat
-    ),
-  })),
+  setChatName: (chatId: string, name: string) => {
+    const db = getFirebaseDB();
+    updateFirebase(ref(db, `chats/${chatId}`), { name }).catch(console.error);
+  },
 
   loadFromDB: async () => {
-    try {
-      set({ isLoading: true });
-      
-      const response = await fetch('/api/db?action=getChats');
-      const { chats: dbChats } = await response.json();
-
-      if (dbChats) {
-        const chatsArray: Chat[] = Object.entries(dbChats).map(([id, data]: [string, any]) => ({
-          id,
-          phone: data.phone || id,
-          name: data.name || '',
-          lastMessage: data.lastMessage || '',
-          lastMessageTime: data.lastMessageTime || Date.now(),
-          unreadCount: data.unreadCount || 0,
-          aiEnabled: data.aiEnabled !== false,
-        }));
-
-        chatsArray.sort((a, b) => b.lastMessageTime - a.lastMessageTime);
-
-        const messages: Record<string, Message[]> = {};
-        
-        for (const chat of chatsArray) {
-          const msgResponse = await fetch(`/api/db?action=getMessages&chatId=${chat.id}`);
-          const { messages: msgs } = await msgResponse.json();
-          if (msgs && msgs.length > 0) {
-            messages[chat.id] = msgs.sort((a: Message, b: Message) => a.timestamp - b.timestamp);
-          }
-        }
-
-        set({ chats: chatsArray, messages, isLoading: false });
-        console.log('Loaded from Firebase:', chatsArray.length, 'chats');
-      } else {
-        set({ isLoading: false });
-      }
-    } catch (error) {
-      console.error('Error loading from DB:', error);
-      set({ isLoading: false });
-    }
+    // No-op, kept for backwards compatibility in components, 
+    // real loading happens in subscribeToDB
   },
 
-  updateChat: (chatId: string, updates: Partial<Chat>) => set((state) => ({
-    chats: state.chats.map((chat) =>
-      chat.id === chatId ? { ...chat, ...updates } : chat
-    ),
-  })),
+  subscribeToDB: () => {
+    const db = getFirebaseDB();
+    
+    // Listen to all chats
+    onValue(ref(db, 'chats'), (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const chatsArray: Chat[] = Object.entries(data).map(([id, chatData]: [string, any]) => ({
+          id,
+          phone: chatData.phone || id,
+          name: chatData.name || '',
+          lastMessage: chatData.lastMessage || '',
+          lastMessageTime: chatData.lastMessageTime || Date.now(),
+          unreadCount: chatData.unreadCount || 0,
+          aiEnabled: chatData.aiEnabled !== false,
+        }));
+        
+        chatsArray.sort((a, b) => b.lastMessageTime - a.lastMessageTime);
+        set({ chats: chatsArray, isLoading: false });
+      } else {
+        set({ chats: [], isLoading: false });
+      }
+    });
+
+    // Listen to all messages
+    onValue(ref(db, 'messages'), (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const parsedMessages: Record<string, Message[]> = {};
+        for (const [chatId, msgs] of Object.entries(data)) {
+          parsedMessages[chatId] = Object.values(msgs as any).sort(
+            (a: any, b: any) => a.timestamp - b.timestamp
+          ) as Message[];
+        }
+        set({ messages: parsedMessages });
+      } else {
+        set({ messages: {} });
+      }
+    });
+  },
+
+  updateChat: (chatId: string, updates: Partial<Chat>) => {
+    const db = getFirebaseDB();
+    updateFirebase(ref(db, `chats/${chatId}`), updates).catch(console.error);
+  },
 }));

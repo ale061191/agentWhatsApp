@@ -29,12 +29,16 @@ function getInitials(name: string): string {
 }
 
 export default function Sidebar() {
-  const { chats, selectedChatId, setSelectedChat, isLoading, loadFromDB } = useStore();
+  const { chats, selectedChatId, setSelectedChat, isLoading } = useStore();
+  const subscribeToDB = (useStore as any).getState().subscribeToDB;
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadFromDB().then(() => setLoading(false));
-  }, [loadFromDB]);
+    if (subscribeToDB) {
+      subscribeToDB();
+      setLoading(false);
+    }
+  }, [subscribeToDB]);
 
   return (
     <div className="w-[400px] h-screen glass flex flex-col">
