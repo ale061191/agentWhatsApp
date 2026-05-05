@@ -25,171 +25,167 @@ function getRandomDelay(): number {
   return Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS) + MIN_DELAY_MS;
 }
 
+interface WHAPIMessage {
+  id?: string;
+  from_me?: boolean;
+  type?: string;
+  chat_id?: string;
+  timestamp?: number;
+  text?: { body?: string };
+  from?: string;
+  from_name?: string;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    console.log('Webhook raw body:', JSON.stringify(body, null, 2));
+    console.log('Webhook received, keys:', Object.keys(body));
     
-    let messages: any[] = [];
-    let phone = '';
-
-    if (body.messages) {
-      messages = body.messages;
-      phone = body.phone || body.from || '';
-    } else if (body.entry && body.entry[0]?.changes) {
-      const changes = body.entry[0].changes[0];
-      if (changes.value?.messages) {
-        messages = changes.value.messages;
-        phone = changes.value.metadata?.phone_number_id || '';
-      }
-    } else if (Array.isArray(body)) {
-      messages = body;
-      phone = body[0]?.from || '';
+    const messages: WHAPIMessage[] = body.messages || [];
+    
+    if (!messages || messages.length === 0) {
+      console.log('No messages in payload');
+      return NextResponse.json(
+        { error: 'No messages found', body: body },
+        { status: 400 }
+      );
     }
 
-    if (!messages || messages.length === 0 || !phone) {
-      console.log('No messages found. Full body:', JSON.stringify(body));
+    const msg = messages[0];
+    const phone = msg.from || msg.chat_id?.replace('@s.whatsapp.net', '').replace('@c.us', '') || '';
+    const messageContent = msg.text?.body || '';
+    const timestamp = msg.timestamp || Math.floor(Date.now() / 1000);
+
+    if (!phone || !messageContent) {
+      console.log('Missing phone or content. msg:', msg);
       return NextResponse.json(
-        { error: 'No valid messages found', received: body },
+        { error: 'Missing phone or content', msg: msg },
         { status: 400 }
       );
     }
 
     const chatId = phone.replace(/\D/g, '').slice(-10);
-    console.log('Processing from phone:', phone, 'chatId:', chatId);
+    console.log('Message from:', phone, 'chatId:', chatId, 'content:', messageContent);
 
-    for (const msg of messages) {
-      if (msg.type === 'text' || msg.text) {
-        const messageContent = msg.text?.body || msg.body || msg.message || '';
-        
-        if (!messageContent) continue;
+    const message: Message = {
+      id: `msg_${Date.now()}`,
+      chatId,
+      content: messageContent,
+      sender: 'user',
+      timestamp: timestamp * 1000,
+      status: 'delivered',
+    };
 
-        const message: Message = {
-          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-          chatId,
-          content: messageContent,
-          sender: 'user',
-          timestamp: msg.timestamp ? msg.timestamp * 1000 : Date.now(),
-          status: 'delivered',
-        };
-
-        console.log('Received message:', messageContent);
-
-        const store = useStore.getState();
-        
-        let aiEnabled = false;
-        const existingChat = store.chats.find(c => c.id === chatId);
-        if (existingChat) {
-          aiEnabled = existingChat.aiEnabled;
-        }
-
-        if (!existingChat) {
-          store.setChats([
-            ...store.chats,
-            {
-              id: chatId,
-              phone: phone,
-              name: '',
-              lastMessage: messageContent,
-              lastMessageTime: message.timestamp,
-              unreadCount: 1,
-              aiEnabled: true,
-            }
-          ]);
-          console.log('Created new chat for:', chatId);
-        }
-        
-        store.addMessage(chatId, message);
-        console.log('Added message to store');
-
-        if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
-          messageCount.count++;
-          
-          const chatMessages = store.messages[chatId] || [];
-          const delay = getRandomDelay();
-          
-          console.log('Scheduling AI response in', delay, 'ms');
-          
-          setTimeout(async () => {
-            try {
-              const historyText = chatMessages
-                ?.slice(-10)
-                ?.map((m: Message) => 
-                  `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`
-                )
-                ?.join('\n') || '';
-
-              const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente. 
-              Responde de manera profesional, breve y útil en máximo 2 párrafos.
-              
-              Historial de la conversación:
-              ${historyText}
-              
-              Nuevo mensaje del cliente: ${messageContent}`;
-
-              console.log('Calling Gemini AI...');
-
-              const aiResponse = await fetch(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }],
-                    generationConfig: {
-                      temperature: 0.7,
-                      maxOutputTokens: 500,
-                    },
-                  }),
-                }
-              );
-
-              const aiData = await aiResponse.json();
-              console.log('Gemini response:', JSON.stringify(aiData));
-              
-              const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
-
-              if (aiText) {
-                console.log('Sending AI response to:', phone);
-                
-                await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
-                  method: 'POST',
-                  headers: {
-                    'Authorization': `Bearer ${WHAPI_TOKEN}`,
-                    'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify({
-                    messaging_product: 'whatsapp',
-                    to: phone,
-                    text: { body: aiText },
-                  }),
-                });
-
-                const aiMsg: Message = {
-                  id: `ai_${Date.now()}`,
-                  chatId,
-                  content: aiText,
-                  sender: 'agent',
-                  timestamp: Date.now(),
-                  status: 'sent',
-                };
-                store.addMessage(chatId, aiMsg);
-                console.log('AI response sent and saved');
-              }
-            } catch (e) {
-              console.error('Error sending AI response:', e);
-            }
-          }, delay);
-        }
-      }
+    const store = useStore.getState();
+    
+    let aiEnabled = false;
+    const existingChat = store.chats.find(c => c.id === chatId);
+    if (existingChat) {
+      aiEnabled = existingChat.aiEnabled;
     }
 
-    return NextResponse.json({ success: true });
+    if (!existingChat) {
+      store.setChats([
+        ...store.chats,
+        {
+          id: chatId,
+          phone: phone,
+          name: msg.from_name || '',
+          lastMessage: messageContent,
+          lastMessageTime: message.timestamp,
+          unreadCount: 1,
+          aiEnabled: true,
+        }
+      ]);
+      console.log('Created new chat:', chatId);
+    }
+    
+    store.addMessage(chatId, message);
+    console.log('Saved message to store');
+
+    if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
+      messageCount.count++;
+      const delay = getRandomDelay();
+      console.log('AI enabled, scheduling response in', delay, 'ms');
+      
+      const chatMessages = store.messages[chatId] || [];
+      
+      setTimeout(async () => {
+        try {
+          const historyText = chatMessages
+            .slice(-10)
+            .map((m: Message) => 
+              `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`
+            )
+            .join('\n');
+
+          const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente. 
+Responde de manera profesional, breve y útil en máximo 2 párrafos.
+
+Historial:
+${historyText}
+
+Nuevo mensaje: ${messageContent}`;
+
+          console.log('Calling Gemini...');
+
+          const aiResponse = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: prompt }] }],
+                generationConfig: {
+                  temperature: 0.7,
+                  maxOutputTokens: 500,
+                },
+              }),
+            }
+          );
+
+          const aiData = await aiResponse.json();
+          const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
+
+          if (aiText) {
+            console.log('Sending AI response:', aiText.substring(0, 100));
+            
+            await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${WHAPI_TOKEN}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                messaging_product: 'whatsapp',
+                to: phone,
+                text: { body: aiText },
+              }),
+            });
+
+            const aiMsg: Message = {
+              id: `ai_${Date.now()}`,
+              chatId,
+              content: aiText,
+              sender: 'agent',
+              timestamp: Date.now(),
+              status: 'sent',
+            };
+            store.addMessage(chatId, aiMsg);
+            console.log('AI response sent');
+          }
+        } catch (e) {
+          console.error('AI error:', e);
+        }
+      }, delay);
+    }
+
+    return NextResponse.json({ success: true, phone, content: messageContent });
   } catch (error) {
-    console.error('Error processing webhook:', error);
+    console.error('Error:', error);
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { error: 'Internal error' },
       { status: 500 }
     );
   }
@@ -203,5 +199,5 @@ export async function GET(request: NextRequest) {
     return new NextResponse(challenge, { status: 200 });
   }
 
-  return NextResponse.json({ error: 'Invalid verification' }, { status: 403 });
+  return NextResponse.json({ status: 'ok', message: 'NOVA TECH AI webhook' });
 }
