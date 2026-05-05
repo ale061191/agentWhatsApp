@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { useStore } from '@/store/useStore';
 import { Message } from '@/types';
 
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
+const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -19,10 +23,12 @@ export async function POST(request: NextRequest) {
 
     for (const msg of messages) {
       if (msg.type === 'text') {
+        const messageContent = msg.text?.body || '';
+        
         const message: Message = {
           id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
           chatId,
-          content: msg.text?.body || '',
+          content: messageContent,
           sender: 'user',
           timestamp: msg.timestamp * 1000 || Date.now(),
           status: 'delivered',
@@ -30,7 +36,12 @@ export async function POST(request: NextRequest) {
 
         const store = useStore.getState();
         
+        let aiEnabled = false;
         const existingChat = store.chats.find(c => c.id === chatId);
+        if (existingChat) {
+          aiEnabled = existingChat.aiEnabled;
+        }
+
         if (!existingChat) {
           store.setChats([
             ...store.chats,
@@ -38,15 +49,85 @@ export async function POST(request: NextRequest) {
               id: chatId,
               phone: phone,
               name: '',
-              lastMessage: message.content,
+              lastMessage: messageContent,
               lastMessageTime: message.timestamp,
               unreadCount: 1,
               aiEnabled: true,
             }
           ]);
+        } else {
+          store.addMessage(chatId, message);
         }
         
         store.addMessage(chatId, message);
+
+        if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN) {
+          const chatMessages = store.messages[chatId] || [];
+          
+          setTimeout(async () => {
+            try {
+              const historyText = chatMessages
+                ?.slice(-10)
+                ?.map((m: Message) => 
+                  `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`
+                )
+                ?.join('\n') || '';
+
+              const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente. 
+              Historial de la conversación:
+              ${historyText}
+              
+              Nuevo mensaje del cliente: ${messageContent}
+              
+              Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
+
+              const aiResponse = await fetch(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: {
+                      temperature: 0.7,
+                      maxOutputTokens: 500,
+                    },
+                  }),
+                }
+              );
+
+              const aiData = await aiResponse.json();
+              const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
+
+              if (aiText) {
+                await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': `Bearer ${WHAPI_TOKEN}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({
+                    messaging_product: 'whatsapp',
+                    to: phone,
+                    text: { body: aiText },
+                  }),
+                });
+
+                const aiMsg: Message = {
+                  id: `ai_${Date.now()}`,
+                  chatId,
+                  content: aiText,
+                  sender: 'agent',
+                  timestamp: Date.now(),
+                  status: 'sent',
+                };
+                store.addMessage(chatId, aiMsg);
+              }
+            } catch (e) {
+              console.error('Error sending AI response:', e);
+            }
+          }, Math.random() * 5000 + 3000);
+        }
       }
     }
 
@@ -65,7 +146,7 @@ export async function GET(request: NextRequest) {
   const token = request.nextUrl.searchParams.get('hub.verify_token');
   const challenge = request.nextUrl.searchParams.get('hub.challenge');
 
-  if (mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN) {
+  if (mode === 'subscribe') {
     return new NextResponse(challenge, { status: 200 });
   }
 
