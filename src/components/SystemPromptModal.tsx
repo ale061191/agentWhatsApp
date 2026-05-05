@@ -92,21 +92,27 @@ export default function SystemPromptModal({ isOpen, onClose }: SystemPromptModal
         onClick={onClose}
       />
       <div className="relative w-full max-w-2xl mx-4 bg-[#1a1a1a] border border-[rgba(37,211,102,0.3)] rounded-2xl shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b border-[rgba(37,211,102,0.2)]">
+        <div 
+          className="flex items-center justify-between border-b border-[rgba(37,211,102,0.2)]"
+          style={{ paddingLeft: '15px', paddingTop: '15px', paddingRight: '15px', paddingBottom: '15px' }}
+        >
           <div className="flex items-center gap-3">
             <Bot className="w-6 h-6 text-[#39ff14]" />
             <h2 className="text-lg font-bold text-white">System Prompt</h2>
           </div>
           <button 
             onClick={onClose}
-            className="p-2 hover:bg-[rgba(255,255,255,0.1] rounded-full transition-colors"
+            className="p-2 hover:bg-[rgba(255,255,255,0.1)] rounded-full transition-colors"
           >
             <X className="w-5 h-5 text-gray-400" />
           </button>
         </div>
 
         <div className="p-4">
-          <div className="flex items-start gap-2 mb-3 p-3 bg-[rgba(37,211,102,0.1)] rounded-lg border border-[rgba(37,211,102,0.2)]">
+          <div 
+            className="flex items-start gap-2 mb-3 rounded-lg border border-[rgba(37,211,102,0.2)]"
+            style={{ paddingLeft: '15px', paddingTop: '15px', paddingRight: '15px', paddingBottom: '15px', backgroundColor: 'rgba(37,211,102,0.1)' }}
+          >
             <AlertCircle className="w-5 h-5 text-[#39ff14] shrink-0 mt-0.5" />
             <p className="text-sm text-gray-300">
               Este prompt define la personalidad, conocimiento y comportamiento del agente IA. 
@@ -117,12 +123,16 @@ export default function SystemPromptModal({ isOpen, onClose }: SystemPromptModal
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            className="w-full h-[400px] p-4 bg-[#0d0d0d] text-white text-sm rounded-xl border border-[rgba(37,211,102,0.2)] focus:border-[#25d366] focus:outline-none resize-none font-mono leading-relaxed"
+            className="w-full h-[400px] bg-[#0d0d0d] text-white text-sm rounded-xl border border-[rgba(37,211,102,0.2)] focus:border-[#25d366] focus:outline-none resize-none font-mono leading-relaxed"
             placeholder="Escribe las instrucciones del agente aquí..."
+            style={{ paddingLeft: '15px', paddingTop: '15px', paddingRight: '15px', paddingBottom: '15px' }}
           />
         </div>
 
-        <div className="flex items-center justify-between p-4 border-t border-[rgba(37,211,102,0.2)]">
+        <div 
+          className="flex items-center justify-between border-t border-[rgba(37,211,102,0.2)]"
+          style={{ paddingLeft: '15px', paddingTop: '15px', paddingRight: '15px', paddingBottom: '15px' }}
+        >
           <button
             onClick={() => setPrompt(DEFAULT_PROMPT)}
             className="text-sm text-gray-400 hover:text-white transition-colors"
@@ -133,7 +143,8 @@ export default function SystemPromptModal({ isOpen, onClose }: SystemPromptModal
           <button
             onClick={handleSave}
             disabled={saving}
-            className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#25d366] to-[#39ff14] text-black font-bold rounded-full hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="flex items-center gap-2 text-black font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
+            style={{ paddingLeft: '15px', paddingRight: '15px', paddingTop: '10px', paddingBottom: '10px', borderRadius: '8px', background: 'linear-gradient(to right, #25d366, #39ff14)' }}
           >
             <Save className="w-4 h-4" />
             {saving ? 'Guardando...' : saved ? '✓ Guardado!' : 'Guardar'}
