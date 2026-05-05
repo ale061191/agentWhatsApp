@@ -16,7 +16,6 @@ export default function ChatArea() {
   const { chats, messages, selectedChatId, addMessage, updateChatAiStatus } = useStore();
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [token, setToken] = useState('');
   const [showSettings, setShowSettings] = useState(false);
 
   const selectedChat = chats.find(c => c.id === selectedChatId);
@@ -27,7 +26,7 @@ export default function ChatArea() {
   }, [chatMessages]);
 
   const handleSend = async () => {
-    if (!inputValue.trim() || !selectedChatId || !token) return;
+    if (!inputValue.trim() || !selectedChatId) return;
 
     const userMessage = {
       id: `msg_${Date.now()}`,
@@ -48,7 +47,6 @@ export default function ChatArea() {
         body: JSON.stringify({
           to: selectedChat?.phone,
           text: inputValue,
-          token: token,
         }),
       });
 
@@ -110,19 +108,6 @@ export default function ChatArea() {
           </button>
         </div>
       </div>
-
-      {showSettings && (
-        <div className="bg-[#fefefe] p-3 border-b border-[#e0e0e0]">
-          <label className="text-xs text-gray-500 block mb-1">Token de WHAPI</label>
-          <input
-            type="text"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="Ingresa tu token de WHAPI"
-            className="w-full px-3 py-2 border border-[#e0e0e0] rounded text-sm focus:outline-none focus:ring-1 focus:ring-[#25d366]"
-          />
-        </div>
-      )}
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2">
         {chatMessages.map((msg) => (
