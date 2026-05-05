@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const WHAPI_BASE_URL = 'https://whapi.io/api';
+const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 
 interface WhatsAppMessage {
   messaging_product: string;
