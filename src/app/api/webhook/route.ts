@@ -159,6 +159,55 @@ Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
           .map((m: Message) => `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`)
           .join('\n');
 
+        // Check if user confirmed sending all requirements for reembolso case
+        // Auto-register case when user confirms AND we haven't registered one yet
+        let userConfirm = messageContent.toLowerCase();
+        let looksLikeReembolso = historyText.toLowerCase().includes('reembolso') || historyText.toLowerCase().includes('volTAJE');
+        let hasBankData = historyText.match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
+        let hasImages = historyText.includes('[imagen') || historyText.toLowerCase().includes('captura');
+        let alreadyHasCaso = (await get(child(dbRef, `casos_reembolso/${chatId}`))).exists();
+        
+        if (!alreadyHasCaso && looksLikeReembolso && hasBankData && hasImages && 
+            (userConfirm.includes('ya') || userConfirm.includes('tienes') || userConfirm.includes('toda') || userConfirm.includes('completo') || userConfirm.includes('enviado') || userConfirm.includes('toda la info'))) {
+          
+          console.log('Auto-registering reembolso case from user confirmation');
+          
+          // Extract user data from context
+          let allContent = historyText + '\n' + messageContent;
+          let cedulaMatch = allContent.match(/(\d{6,8})/);
+          let telefonoMatch = allContent.match(/0(414|416|424|426|412|4\d{2})\d{7}/);
+          let cuentaMatch = allContent.match(/01\d{19}/);
+          let nombreMatch = allContent.match(/([A-Z][a-z]+\s+[A-Z][a-z]+)/);
+          
+          const casoData = {
+            caso_id: chatId,
+            fecha_primer_contacto: new Date(Date.now() - 30*60000).toISOString(),
+            fecha_registro_caso: new Date().toISOString(),
+            canal: 'WhatsApp',
+            agente: 'SONIA — VOLTAJE PLUS',
+            datos_usuario: {
+              nombre_completo: nombreMatch ? nombreMatch[1] : 'Usuario',
+              cedula: cedulaMatch ? cedulaMatch[1] : '',
+              telefono: telefonoMatch ? telefonoMatch[0] : '',
+              numero_cuenta: cuentaMatch ? cuentaMatch[0] : '',
+              tipo_cuenta: allContent.toLowerCase().includes('corriente') ? 'Corriente' : 'Ahorro'
+            },
+            evidencias: {
+              captura_historial_operaciones: '[Imagen recibida]',
+              captura_billetera_app: '[Imagen recibida]',
+              captura_movimientos_bancarios: '[Imagen recibida]'
+            },
+            estado_caso: 'pendiente_validacion'
+          };
+          
+          try {
+            await set(ref(db, `casos_reembolso/${chatId}`), casoData);
+            console.log('Caso de reembolso auto-registrado:', chatId);
+          } catch (e) {
+            console.error('Error auto-registrando caso:', e);
+          }
+        }
+
         const prompt = `${systemPrompt}
 
 Historial:
