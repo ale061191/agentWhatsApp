@@ -153,6 +153,7 @@ export default function ChatArea() {
           <div
             key={msg.id}
             className={`flex ${msg.sender === 'agent' ? 'justify-end' : 'justify-start'}`}
+            style={{ marginTop: '8px', marginBottom: '8px' }}
           >
             <div
               className={`max-w-[75%] ${
@@ -161,7 +162,9 @@ export default function ChatArea() {
                   : 'bg-[#2d333b] text-white rounded-[7.5px_7.5px_7.5px_7.5px]'
               }`}
               style={{ 
-                padding: '10px 14px'
+                padding: '10px 14px',
+                marginRight: msg.sender === 'agent' ? '16px' : '0',
+                marginLeft: msg.sender === 'user' ? '16px' : '0'
               }}
             >
               <p className="text-[15px] leading-[19px]">{msg.content}</p>
