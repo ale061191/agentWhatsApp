@@ -94,7 +94,7 @@ export default function ChatArea() {
 
   return (
     <div className="flex-1 flex flex-col" style={{ background: 'radial-gradient(ellipse at top, rgba(37,211,102,0.05) 0%, #0d0d0d 50%)' }}>
-      <div className="glass p-[10px_16px_10px_16px] flex items-center justify-between border-b border-[rgba(37,211,102,0.2)]">
+      <div className="glass flex items-center justify-between border-b border-[rgba(37,211,102,0.2)]" style={{ paddingBottom: '15px', paddingLeft: '15px', paddingTop: '15px', paddingRight: '15px' }}>
         <div className="flex items-center gap-[12px]">
           <div className="w-[40px] h-[40px] rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-[13px] font-bold neon-glow shrink-0">
             {selectedChat?.name ? getInitials(selectedChat.name) : selectedChat?.phone.slice(-2)}

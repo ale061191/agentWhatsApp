@@ -43,7 +43,7 @@ export default function Sidebar() {
   return (
     <div className="w-[400px] h-screen glass flex flex-col box-border">
       <div className="p-[12px_16px] pb-[12px] glass border-b border-[rgba(37,211,102,0.2)]">
-        <div className="flex items-center gap-[10px] mb-4">
+        <div className="flex items-center gap-[10px] mb-4" style={{ paddingLeft: '15px', paddingTop: '15px' }}>
           <Bot className="w-10 h-10 text-[#39ff14]" />
           <div>
             <h1 className="text-lg font-bold text-white">NOVA TECH AI</h1>
