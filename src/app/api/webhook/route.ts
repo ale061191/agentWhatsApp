@@ -37,10 +37,11 @@ export async function POST(request: NextRequest) {
     let lastMsgType = 'unknown';
 
     // WHAPI documentation format
-    if (body.messages && Array.isArray(body.messages)) {
+if (body.messages && Array.isArray(body.messages)) {
       messages = body.messages;
       const msg = messages[0];
-      lastMsgType = msg.type || 'unknown';
+      
+      console.log('Full message payload:', JSON.stringify(msg).slice(0, 500)); // Log for debugging
       
       // Ignore messages from ourselves (the bot)
       if (msg.from_me === true) {
@@ -48,18 +49,21 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, ignored: true });
       }
 
-      phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
       
       // Handle different message types - get any text content
+      let msgType = msg.type || 'unknown';
       messageContent = msg.text?.body || '';
       
       // If there's an image, note it (even without caption)
-      if (msg.type === 'image') {
-        messageContent = messageContent || '[Imagen recebida]';
+      // Also check for image_waits or media types
+      if (msgType === 'image' || msgType === 'image_waits' || msg.media?.type === 'image') {
+        messageContent = messageContent || `[Imagen received from user]`;
+        console.log('Image detected, type:', msgType);
       }
       // If it's a different type, mark it
-      if (msg.type && msg.type !== 'text' && !messageContent) {
-         messageContent = `[${msg.type} recibido]`;
+      if (msgType && msgType !== 'text' && !messageContent) {
+         messageContent = `[${msgType} recibido]`;
       }
     } else {
        console.log('Unsupported payload structure');
@@ -164,7 +168,7 @@ Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
         let userConfirm = messageContent.toLowerCase();
         let looksLikeReembolso = historyText.toLowerCase().includes('reembolso') || historyText.toLowerCase().includes('volTAJE');
         let hasBankData = historyText.match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
-        let hasImages = historyText.includes('[imagen') || historyText.toLowerCase().includes('captura');
+        let hasImages = historyText.toLowerCase().includes('[imagen') || historyText.toLowerCase().includes('[image') || historyText.toLowerCase().includes('captura');
         let alreadyHasCaso = (await get(child(dbRef, `casos_reembolso/${chatId}`))).exists();
         
         if (!alreadyHasCaso && looksLikeReembolso && hasBankData && hasImages && 
