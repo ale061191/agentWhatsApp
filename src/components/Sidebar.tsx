@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Bot, Search } from 'lucide-react';
+import { Bot, Search, Settings, BookOpen } from 'lucide-react';
+import SystemPromptModal from './SystemPromptModal';
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -32,6 +33,7 @@ export default function Sidebar() {
   const { chats, selectedChatId, setSelectedChat, isLoading } = useStore();
   const subscribeToDB = (useStore as any).getState().subscribeToDB;
   const [loading, setLoading] = useState(true);
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
 
   useEffect(() => {
     if (subscribeToDB) {
@@ -121,7 +123,19 @@ export default function Sidebar() {
         <div className="text-center text-xs text-gray-500">
           <span className="text-[#25d366]">NOVA TECH AI</span> v1.0
         </div>
+        <button 
+          onClick={() => setShowSystemPrompt(true)}
+          className="w-full mt-3 flex items-center justify-center gap-2 px-4 py-2 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-lg transition-colors text-sm text-gray-400 hover:text-white"
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>System Prompt</span>
+        </button>
       </div>
+      
+      <SystemPromptModal 
+        isOpen={showSystemPrompt} 
+        onClose={() => setShowSystemPrompt(false)} 
+      />
     </div>
   );
 }

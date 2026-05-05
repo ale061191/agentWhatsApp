@@ -122,6 +122,21 @@ export async function POST(request: NextRequest) {
       
       try {
         console.log('Calling Gemini API directly...');
+        
+        // Fetch system prompt from Firebase or use default
+        let systemPrompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente de NOVA TECH AI. 
+Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
+        
+        try {
+          const promptSnap = await get(child(dbRef, 'system/prompt'));
+          if (promptSnap.exists() && promptSnap.val()) {
+            systemPrompt = promptSnap.val();
+            console.log('Loaded custom system prompt from DB');
+          }
+        } catch (e) {
+          console.log('Using default prompt');
+        }
+        
         // We fetch the history for context
         const historySnap = await get(child(dbRef, `messages/${chatId}`));
         const messagesObj = historySnap.val() || {};
@@ -132,8 +147,7 @@ export async function POST(request: NextRequest) {
           .map((m: Message) => `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`)
           .join('\n');
 
-        const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente de NOVA TECH AI. 
-Responde de manera profesional, breve y útil en máximo 2 párrafos.
+        const prompt = `${systemPrompt}
 
 Historial:
 ${historyText}
