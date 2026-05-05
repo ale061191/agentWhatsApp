@@ -148,20 +148,21 @@ export default function ChatArea() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-[16px_24px]" style={{ marginBottom: '10px' }}>
+      <div className="flex-1 overflow-y-auto p-[16px_24px] flex flex-col gap-[8px]" style={{ marginBottom: '10px' }}>
         {chatMessages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.sender === 'agent' ? 'justify-end' : 'justify-start'}`}
-            style={{ marginBottom: '10px' }}
           >
             <div
               className={`max-w-[75%] ${
                 msg.sender === 'agent'
-                  ? 'bg-[#00a884] text-white rounded-[7.5px_7.5px_0_7.5px] ml-auto'
-                  : 'bg-[#2d333b] text-white rounded-[7.5px_7.5px_7.5px_7.5px] mr-auto'
+                  ? 'bg-[#00a884] text-white rounded-[7.5px_7.5px_0_7.5px]'
+                  : 'bg-[#2d333b] text-white rounded-[7.5px_7.5px_7.5px_7.5px]'
               }`}
-              style={{ padding: '10px 14px' }}
+              style={{ 
+                padding: '10px 14px'
+              }}
             >
               <p className="text-[15px] leading-[19px]">{msg.content}</p>
               <div className="flex items-center justify-end gap-[4px] mt-[4px]">
