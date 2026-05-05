@@ -50,15 +50,14 @@ export default function Sidebar() {
             <p className="text-xs text-[#25d366]">Asistente Virtual</p>
           </div>
         </div>
-        <div className="relative flex items-center" style={{ padding: '8px 12px' }}>
+        <div className="relative flex items-center bg-[#1f252d]" style={{ borderRadius: '8px', padding: '8px 12px' }}>
           <Search 
-            className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#25d365]" 
-            style={{ left: '16px', marginRight: '12px' }} 
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" 
           />
           <input
             type="text"
             placeholder="Buscar conversaciones..."
-            className="w-full pl-12 pr-4 py-2.5 glass-card text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366] text-base"
+            className="w-full pl-10 pr-4 py-2 bg-transparent text-white text-[15px] placeholder-gray-500 focus:outline-none"
             style={{ borderRadius: '8px' }}
           />
         </div>
