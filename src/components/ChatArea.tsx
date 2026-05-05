@@ -148,7 +148,7 @@ export default function ChatArea() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-[16px_20px]" style={{ marginBottom: '10px' }}>
+      <div className="flex-1 overflow-y-auto p-[16px_24px]" style={{ marginBottom: '10px' }}>
         {chatMessages.map((msg) => (
           <div
             key={msg.id}
