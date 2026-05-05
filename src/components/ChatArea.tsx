@@ -194,7 +194,7 @@ export default function ChatArea() {
             onKeyDown={handleKeyDown}
             placeholder="Escribe un mensaje..."
             className="flex-1 px-[14px] py-[10px] bg-[#1f252d] text-white text-[15px] placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366]"
-            style={{ borderRadius: '8px', padding: '10px 14px' }}
+            style={{ borderRadius: '8px', padding: '10px 14px', marginTop: '15px', marginBottom: '15px' }}
           />
           <button
             onClick={handleSend}
