@@ -27,7 +27,8 @@ function getRandomDelay(): number {
 
 async function saveMessageToDB(chatId: string, message: Message) {
   try {
-    await fetch('/api/db', {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    await fetch(`${appUrl}/api/db`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -44,7 +45,8 @@ async function saveMessageToDB(chatId: string, message: Message) {
 
 async function saveChatToDB(chat: { id: string; phone: string; name: string; lastMessage: string; lastMessageTime: number; unreadCount: number; aiEnabled: boolean }) {
   try {
-    await fetch('/api/db', {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    await fetch(`${appUrl}/api/db`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
