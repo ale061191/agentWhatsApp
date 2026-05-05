@@ -6,6 +6,25 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
+const MIN_DELAY_MS = 30000;
+const MAX_DELAY_MS = 60000;
+const MAX_MESSAGES_PER_DAY = 100;
+
+const messageCount = { count: 0, lastReset: Date.now() };
+
+function shouldRespond(): boolean {
+  const now = Date.now();
+  if (now - messageCount.lastReset > 24 * 60 * 60 * 1000) {
+    messageCount.count = 0;
+    messageCount.lastReset = now;
+  }
+  return messageCount.count < MAX_MESSAGES_PER_DAY;
+}
+
+function getRandomDelay(): number {
+  return Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS) + MIN_DELAY_MS;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -55,17 +74,19 @@ export async function POST(request: NextRequest) {
               aiEnabled: true,
             }
           ]);
-        } else {
-          store.addMessage(chatId, message);
         }
         
         store.addMessage(chatId, message);
 
-        if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN) {
-          const chatMessages = store.messages[chatId] || [];
+        if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
+          messageCount.count++;
+          
+          const delay = getRandomDelay();
           
           setTimeout(async () => {
             try {
+              const chatMessages = store.messages[chatId] || [];
+              
               const historyText = chatMessages
                 ?.slice(-10)
                 ?.map((m: Message) => 
@@ -74,12 +95,12 @@ export async function POST(request: NextRequest) {
                 ?.join('\n') || '';
 
               const prompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente. 
+              Responde de manera profesional, breve y útil en máximo 2 párrafos.
+              
               Historial de la conversación:
               ${historyText}
               
-              Nuevo mensaje del cliente: ${messageContent}
-              
-              Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
+              Nuevo mensaje del cliente: ${messageContent}`;
 
               const aiResponse = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
@@ -126,7 +147,7 @@ export async function POST(request: NextRequest) {
             } catch (e) {
               console.error('Error sending AI response:', e);
             }
-          }, Math.random() * 5000 + 3000);
+          }, delay);
         }
       }
     }
@@ -143,7 +164,6 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   const mode = request.nextUrl.searchParams.get('hub.mode');
-  const token = request.nextUrl.searchParams.get('hub.verify_token');
   const challenge = request.nextUrl.searchParams.get('hub.challenge');
 
   if (mode === 'subscribe') {
