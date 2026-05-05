@@ -94,36 +94,36 @@ export default function ChatArea() {
 
   return (
     <div className="flex-1 flex flex-col" style={{ background: 'radial-gradient(ellipse at top, rgba(37,211,102,0.05) 0%, #0d0d0d 50%)' }}>
-      <div className="glass p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-sm font-bold neon-glow">
+      <div className="glass p-[10px_16px_10px_16px] flex items-center justify-between border-b border-[rgba(37,211,102,0.2)]">
+        <div className="flex items-center gap-[12px]">
+          <div className="w-[40px] h-[40px] rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-[13px] font-bold neon-glow shrink-0">
             {selectedChat?.name ? getInitials(selectedChat.name) : selectedChat?.phone.slice(-2)}
           </div>
           <div>
-            <h2 className="font-bold text-white">{selectedChat?.name || selectedChat?.phone}</h2>
+            <h2 className="font-bold text-white text-[15px]">{selectedChat?.name || selectedChat?.phone}</h2>
             <p className="text-xs text-[#25d366]">{selectedChat?.phone}</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 glass px-3 py-1.5 rounded-full">
-            <Bot className={`w-4 h-4 ${selectedChat?.aiEnabled ? 'text-[#39ff14]' : 'text-gray-500'}`} />
+        <div className="flex items-center gap-[4px]">
+          <div className="flex items-center gap-[6px] bg-[#1f252d] px-[12px] py-[6px] rounded-[20px]">
+            <Bot className={`w-[16px] h-[16px] ${selectedChat?.aiEnabled ? 'text-[#39ff14]' : 'text-gray-500'}`} />
             <span className="text-xs text-gray-400">AI</span>
             <Switch
               checked={selectedChat?.aiEnabled || false}
               onCheckedChange={(checked) => updateChatAiStatus(selectedChatId, checked)}
-              className="data-[state=checked]:bg-[#39ff14]"
+              className="data-[state=checked]:bg-[#39ff14] h-[22px] w-[40px]"
             />
           </div>
-          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
+          {/* <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all">
             <Phone className="w-5 h-5 text-gray-400" />
           </button>
-          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
+          <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all">
             <Video className="w-5 h-5 text-gray-400" />
-          </button>
+          </button> */}
           <button 
             onClick={() => setShowSettings(!showSettings)}
-            className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all"
+            className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all"
           >
             <Settings className="w-5 h-5 text-gray-400" />
           </button>
@@ -148,24 +148,24 @@ export default function ChatArea() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-4 space-y-1">
         {chatMessages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.sender === 'agent' ? 'justify-end' : 'justify-start'}`}
           >
             <div
-              className={`max-w-[70%] px-4 py-3 rounded-2xl text-sm ${
+              className={`max-w-[65%] px-[12px] py-[8px] rounded-[7.5px] text-msg ${
                 msg.sender === 'agent'
-                  ? 'glass-card text-white rounded-br-none'
-                  : 'glass text-white rounded-bl-none'
+                  ? 'bg-[#00a884] text-white rounded-[7.5px_7.5px_0_7.5px]'
+                  : 'bg-[#2d333b] text-white rounded-[7.5px_7.5px_7.5px_7.5px]'
               }`}
             >
-              <p>{msg.content}</p>
-              <div className="flex items-center justify-end gap-1 mt-2">
-                <span className="text-[10px] text-gray-500">{formatTime(msg.timestamp)}</span>
+              <p className="text-[15px] leading-[19px]">{msg.content}</p>
+              <div className="flex items-center justify-end gap-[4px] mt-[4px]">
+                <span className="text-[11px] opacity-70">{formatTime(msg.timestamp)}</span>
                 {msg.sender === 'agent' && (
-                  <span className="text-[10px] text-[#25d366]">
+                  <span className="text-[11px]">
                     {msg.status === 'delivered' ? '✓✓' : '✓'}
                   </span>
                 )}
@@ -176,13 +176,13 @@ export default function ChatArea() {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="glass p-4 border-t border-[rgba(37,211,102,0.2)]">
-        <div className="flex items-center gap-3">
-          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
-            <Paperclip className="w-5 h-5 text-gray-400" />
+      <div className="glass p-[10px_8px_10px_10px] border-t border-[rgba(37,211,102,0.2)]">
+        <div className="flex items-center gap-[8px]">
+          <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all">
+            <Paperclip className="w-6 h-6 text-gray-400" />
           </button>
-          <button className="p-2 glass rounded-full hover:bg-[rgba(37,211,102,0.2)] transition-all">
-            <Smile className="w-5 h-5 text-gray-400" />
+          <button className="w-[40px] h-[40px] flex items-center justify-center rounded-full hover:bg-[rgba(37,211,102,0.15)] transition-all">
+            <Smile className="w-6 h-6 text-gray-400" />
           </button>
           <input
             type="text"
@@ -190,12 +190,12 @@ export default function ChatArea() {
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Escribe un mensaje..."
-            className="flex-1 px-4 py-3 glass-card rounded-full text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366]"
+            className="flex-1 px-[16px] py-[10px] bg-[#1f252d] text-white text-[15px] rounded-[30px] placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-[#25d366]"
           />
           <button
             onClick={handleSend}
             disabled={!inputValue.trim()}
-            className="p-3 bg-gradient-to-r from-[#25d366] to-[#39ff14] text-black rounded-full hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all neon-glow"
+            className="w-[40px] h-[40px] bg-[#00a884] text-white rounded-full hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center"
           >
             <Send className="w-5 h-5" />
           </button>
