@@ -41,8 +41,8 @@ export default function Sidebar() {
   }, [subscribeToDB]);
 
   return (
-    <div className="w-[400px] h-screen glass flex flex-col">
-      <div className="p-4 pb-3 glass border-b border-[rgba(37,211,102,0.2)]">
+    <div className="w-[400px] h-screen glass flex flex-col box-border">
+      <div className="p-[12px_16px] pb-[12px] glass border-b border-[rgba(37,211,102,0.2)]">
         <div className="flex items-center gap-3 mb-4">
           <Bot className="w-10 h-10 text-[#39ff14]" />
           <div>
@@ -50,8 +50,8 @@ export default function Sidebar() {
             <p className="text-xs text-[#25d366]">Asistente Virtual</p>
           </div>
         </div>
-        <div className="relative">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-[#25d365]" />
+        <div className="relative" style={{ padding: '8px 12px', gap: '8px' }}>
+          <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#25d365]" style={{ marginRight: '8px' }} />
           <input
             type="text"
             placeholder="Buscar conversaciones..."
@@ -60,7 +60,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" style={{ padding: '4px 0' }}>
         {loading || isLoading ? (
           <div className="p-8 px-6 text-center text-gray-500 text-sm">
             <div className="glass-card p-6 rounded-xl">
@@ -75,44 +75,46 @@ export default function Sidebar() {
             </div>
           </div>
         ) : (
-          chats.map((chat) => (
-            <div
-              key={chat.id}
-              onClick={() => setSelectedChat(chat.id)}
-              className={`flex items-center px-4 py-3 cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] ${
-                selectedChatId === chat.id ? 'bg-[rgba(37,211,102,0.15)] border-l-4 border-l-[#25d366]' : ''
-              }`}
-            >
-              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-sm font-bold neon-glow shrink-0">
-                {chat.name ? getInitials(chat.name) : chat.phone.slice(-2)}
+          <div style={{ marginBottom: '8px' }}></div>
+        )}
+        {chats.map((chat) => (
+          <div
+            key={chat.id}
+            onClick={() => setSelectedChat(chat.id)}
+            className={`flex items-center cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] ${
+              selectedChatId === chat.id ? 'bg-[rgba(37,211,102,0.15)] border-l-4 border-l-[#25d366]' : ''
+            }`}
+            style={{ padding: '10px 12px', gap: '10px' }}
+          >
+            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-sm font-bold neon-glow shrink-0">
+              {chat.name ? getInitials(chat.name) : chat.phone.slice(-2)}
+            </div>
+            
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-base truncate text-white">
+                  {chat.name || chat.phone}
+                </span>
+                <span className="text-xs text-[#25d366] ml-2">
+                  {formatTime(chat.lastMessageTime)}
+                </span>
               </div>
-              
-              <div className="flex-1 ml-4 min-w-0">
-                <div className="flex items-center justify-between">
-                  <span className="font-medium text-base truncate text-white">
-                    {chat.name || chat.phone}
+              <div className="flex items-center justify-between mt-1">
+                <span className="text-sm text-gray-400 truncate">
+                  {chat.lastMessage || 'Sin mensajes'}
+                </span>
+                {chat.unreadCount > 0 && (
+                  <span className="min-w-[22px] h-[22px] px-1.5 ml-2 bg-gradient-to-r from-[#25d366] to-[#39ff14] rounded-full text-black text-xs font-bold flex items-center justify-center neon-glow shrink-0">
+                    {chat.unreadCount}
                   </span>
-                  <span className="text-xs text-[#25d366] ml-2">
-                    {formatTime(chat.lastMessageTime)}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-sm text-gray-400 truncate">
-                    {chat.lastMessage || 'Sin mensajes'}
-                  </span>
-                  {chat.unreadCount > 0 && (
-                    <span className="min-w-[22px] h-[22px] px-1.5 ml-2 bg-gradient-to-r from-[#25d366] to-[#39ff14] rounded-full text-black text-xs font-bold flex items-center justify-center neon-glow shrink-0">
-                      {chat.unreadCount}
-                    </span>
-                  )}
-                </div>
+                )}
               </div>
             </div>
-          ))
-        )}
+          </div>
+        ))}
       </div>
 
-      <div className="p-3 glass border-t border-[rgba(37,211,102,0.2)]">
+      <div className="p-[12px_16px] glass border-t border-[rgba(37,211,102,0.2)]">
         <div className="text-center text-xs text-gray-500">
           <span className="text-[#25d366]">NOVA TECH AI</span> v1.0
         </div>
