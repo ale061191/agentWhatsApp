@@ -156,7 +156,11 @@ Nuevo mensaje: ${messageContent}`;
         );
 
         if (!aiResponse.ok) {
-           console.error('Gemini API Error:', await aiResponse.text());
+           const errText = await aiResponse.text();
+           console.error('Gemini API Error:', errText);
+           await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
+             id: `err_${Date.now()}`, chatId, content: `Error en IA (Gemini): ${errText}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
+           });
         } else {
           const aiData = await aiResponse.json();
           const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -178,7 +182,11 @@ Nuevo mensaje: ${messageContent}`;
             });
 
             if (!whapiRes.ok) {
-               console.error('WHAPI Send Error:', await whapiRes.text());
+               const errText = await whapiRes.text();
+               console.error('WHAPI Send Error:', errText);
+               await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
+                 id: `err_${Date.now()}`, chatId, content: `Error al enviar WHAPI: ${errText}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
+               });
             } else {
               const aiMsg: Message = {
                 id: `ai_${Date.now()}`,
@@ -199,11 +207,20 @@ Nuevo mensaje: ${messageContent}`;
             }
           }
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error('AI Processing Error:', e);
+        await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
+           id: `err_${Date.now()}`, chatId, content: `Error interno procesando IA: ${e.message}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
+        });
       }
     } else {
-       console.log(`Not responding. aiEnabled:${aiEnabled}, hasApiKey:${!!GOOGLE_API_KEY}, hasWhapiToken:${!!WHAPI_TOKEN}`);
+       const reason = `No respondo. aiEnabled:${aiEnabled}, GOOGLE_API_KEY:${!!GOOGLE_API_KEY}, WHAPI_TOKEN:${!!WHAPI_TOKEN}`;
+       console.log(reason);
+       if (!GOOGLE_API_KEY || !WHAPI_TOKEN) {
+         await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
+            id: `err_${Date.now()}`, chatId, content: `Error de configuración: Faltan variables de entorno. ${reason}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
+         });
+       }
     }
 
     return NextResponse.json({ success: true });
