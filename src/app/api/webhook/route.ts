@@ -29,29 +29,52 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    const { messages, phone } = body;
+    console.log('Webhook raw body:', JSON.stringify(body, null, 2));
+    
+    let messages: any[] = [];
+    let phone = '';
 
-    if (!messages || !phone) {
+    if (body.messages) {
+      messages = body.messages;
+      phone = body.phone || body.from || '';
+    } else if (body.entry && body.entry[0]?.changes) {
+      const changes = body.entry[0].changes[0];
+      if (changes.value?.messages) {
+        messages = changes.value.messages;
+        phone = changes.value.metadata?.phone_number_id || '';
+      }
+    } else if (Array.isArray(body)) {
+      messages = body;
+      phone = body[0]?.from || '';
+    }
+
+    if (!messages || messages.length === 0 || !phone) {
+      console.log('No messages found. Full body:', JSON.stringify(body));
       return NextResponse.json(
-        { error: 'Invalid payload' },
+        { error: 'No valid messages found', received: body },
         { status: 400 }
       );
     }
 
     const chatId = phone.replace(/\D/g, '').slice(-10);
+    console.log('Processing from phone:', phone, 'chatId:', chatId);
 
     for (const msg of messages) {
-      if (msg.type === 'text') {
-        const messageContent = msg.text?.body || '';
+      if (msg.type === 'text' || msg.text) {
+        const messageContent = msg.text?.body || msg.body || msg.message || '';
         
+        if (!messageContent) continue;
+
         const message: Message = {
           id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
           chatId,
           content: messageContent,
           sender: 'user',
-          timestamp: msg.timestamp * 1000 || Date.now(),
+          timestamp: msg.timestamp ? msg.timestamp * 1000 : Date.now(),
           status: 'delivered',
         };
+
+        console.log('Received message:', messageContent);
 
         const store = useStore.getState();
         
@@ -74,19 +97,22 @@ export async function POST(request: NextRequest) {
               aiEnabled: true,
             }
           ]);
+          console.log('Created new chat for:', chatId);
         }
         
         store.addMessage(chatId, message);
+        console.log('Added message to store');
 
         if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
           messageCount.count++;
           
+          const chatMessages = store.messages[chatId] || [];
           const delay = getRandomDelay();
+          
+          console.log('Scheduling AI response in', delay, 'ms');
           
           setTimeout(async () => {
             try {
-              const chatMessages = store.messages[chatId] || [];
-              
               const historyText = chatMessages
                 ?.slice(-10)
                 ?.map((m: Message) => 
@@ -101,6 +127,8 @@ export async function POST(request: NextRequest) {
               ${historyText}
               
               Nuevo mensaje del cliente: ${messageContent}`;
+
+              console.log('Calling Gemini AI...');
 
               const aiResponse = await fetch(
                 `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
@@ -118,9 +146,13 @@ export async function POST(request: NextRequest) {
               );
 
               const aiData = await aiResponse.json();
+              console.log('Gemini response:', JSON.stringify(aiData));
+              
               const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
 
               if (aiText) {
+                console.log('Sending AI response to:', phone);
+                
                 await fetch(`${WHAPI_BASE_URL}/sendMessage`, {
                   method: 'POST',
                   headers: {
@@ -143,6 +175,7 @@ export async function POST(request: NextRequest) {
                   status: 'sent',
                 };
                 store.addMessage(chatId, aiMsg);
+                console.log('AI response sent and saved');
               }
             } catch (e) {
               console.error('Error sending AI response:', e);
