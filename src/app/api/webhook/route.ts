@@ -34,11 +34,13 @@ export async function POST(request: NextRequest) {
     let messages: any[] = [];
     let phone = '';
     let messageContent = '';
+    let lastMsgType = 'unknown';
 
     // WHAPI documentation format
     if (body.messages && Array.isArray(body.messages)) {
       messages = body.messages;
       const msg = messages[0];
+      lastMsgType = msg.type || 'unknown';
       
       // Ignore messages from ourselves (the bot)
       if (msg.from_me === true) {
@@ -47,22 +49,32 @@ export async function POST(request: NextRequest) {
       }
 
       phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+      
+      // Handle different message types - get any text content
       messageContent = msg.text?.body || '';
-
-      if (!messageContent && msg.type !== 'text') {
-         console.log(`Skipping non-text message of type: ${msg.type}`);
-         return NextResponse.json({ success: true, skipped: 'non-text' });
+      
+      // If there's an image, note it (even without caption)
+      if (msg.type === 'image') {
+        messageContent = messageContent || '[Imagen recebida]';
       }
-    } 
-    // Fallback format
-    else {
+      // If it's a different type, mark it
+      if (msg.type && msg.type !== 'text' && !messageContent) {
+         messageContent = `[${msg.type} recibido]`;
+      }
+    } else {
        console.log('Unsupported payload structure');
        return NextResponse.json({ error: 'Unsupported format' }, { status: 400 });
     }
 
-    if (!phone || !messageContent) {
-      console.log('Missing phone or content in payload');
+    if (!phone) {
+      console.log('Missing phone in payload');
       return NextResponse.json({ error: 'Missing data' }, { status: 400 });
+    }
+
+    // If no text content, skip empty messages
+    if (!messageContent) {
+       console.log(`Skipping empty message of type: ${lastMsgType}`);
+       return NextResponse.json({ success: true, skipped: 'empty' });
     }
 
     const chatId = phone.replace(/\D/g, '').slice(-10);
