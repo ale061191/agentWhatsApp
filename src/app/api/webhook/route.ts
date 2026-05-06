@@ -84,6 +84,9 @@ if (isImageMsg) {
         if (line.toLowerCase().includes('ahorro')) tipo = 'Ahorro';
       }
       
+      // Update chat with user's name
+      await update(ref(db, 'chats/' + chatId), { name: nombre, phone: oldChat.phone });
+      
       const caso = {
         caso_id: 'CASO-' + Date.now(),
         fecha_primer_contacto: new Date(Date.now() - 30*60000).toISOString(),
@@ -95,7 +98,7 @@ if (isImageMsg) {
         estado_validacion: 'completado'
       };
       await set(ref(db, 'casos_reembolso/' + chatId), caso);
-      console.log('[AUTO] Caso registrado automáticamente');
+      console.log('[AUTO] Caso y nombre registrados');
     }
     
     if (!aiEnabled) return NextResponse.json({ success: true });
