@@ -128,14 +128,14 @@ export default function Sidebar() {
         <div className="flex flex-col gap-2">
           <button 
             onClick={() => setShowSystemPrompt(true)}
-            className="w-full py-[5px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[8px] transition-colors text-sm text-gray-400 hover:text-white"
+            className="w-full py-[5px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[2px] transition-colors text-sm text-gray-400 hover:text-white"
           >
             <BookOpen className="w-4 h-4" />
             <span>System Prompt</span>
           </button>
           <button 
             onClick={() => setShowCasosReembolso(true)}
-            className="w-full py-[5px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[8px] transition-colors text-sm text-gray-400 hover:text-white"
+            className="w-full py-[5px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[2px] transition-colors text-sm text-gray-400 hover:text-white"
           >
             <CreditCard className="w-4 h-4" />
             <span>Casos Reembolso</span>
