@@ -7,333 +7,165 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-const MIN_DELAY_MS = 30000;
-const MAX_DELAY_MS = 60000;
-const MAX_MESSAGES_PER_DAY = 100;
-
-const messageCount = { count: 0, lastReset: Date.now() };
-
-function shouldRespond(): boolean {
-  const now = Date.now();
-  if (now - messageCount.lastReset > 24 * 60 * 60 * 1000) {
-    messageCount.count = 0;
-    messageCount.lastReset = now;
-  }
-  return messageCount.count < MAX_MESSAGES_PER_DAY;
-}
-
-function getRandomDelay(): number {
-  return Math.random() * (MAX_DELAY_MS - MIN_DELAY_MS) + MIN_DELAY_MS;
-}
-
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
   try {
-    const body = await request.json();
-    console.log('Webhook raw body:', JSON.stringify(body, null, 2).slice(0, 1000));
+    const body = await req.json();
+    const msgs = body.messages || [];
+    if (!msgs.length) return NextResponse.json({ error: 'No messages' }, { status: 400 });
     
-    let messages: any[] = [];
-    let phone = '';
-    let messageContent = '';
-    let lastMsgType = 'unknown';
-
-    // WHAPI documentation format
-if (body.messages && Array.isArray(body.messages)) {
-      messages = body.messages;
-      const msg = messages[0];
-      
-      console.log('Full message payload:', JSON.stringify(msg).slice(0, 500)); // Log for debugging
-      
-      // Ignore messages from ourselves (the bot)
-      if (msg.from_me === true) {
-        console.log('Ignoring message sent by the bot');
-        return NextResponse.json({ success: true, ignored: true });
-      }
-
-phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
-      
-      // Handle different message types - get any text content
-      let msgType = msg.type || 'unknown';
-      messageContent = msg.text?.body || '';
-      
-      // If there's an image, note it (even without caption)
-      // Also check for image_waits or media types
-      if (msgType === 'image' || msgType === 'image_waits' || msg.media?.type === 'image') {
-        messageContent = messageContent || `[Imagen received from user]`;
-        console.log('Image detected, type:', msgType);
-      }
-      // If it's a different type, mark it
-      if (msgType && msgType !== 'text' && !messageContent) {
-         messageContent = `[${msgType} recibido]`;
-      }
-    } else {
-       console.log('Unsupported payload structure');
-       return NextResponse.json({ error: 'Unsupported format' }, { status: 400 });
+    const msg = msgs[0];
+    if (msg.from_me) return NextResponse.json({ success: true });
+    
+    const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+    let content = msg.text?.body || '';
+    const msgType = msg.type || 'text';
+    
+    // Log the FULL incoming message structure
+    console.log('[FULL_MSG]', JSON.stringify(msg));
+    
+    // Clean content - remove image markers
+    const imageMarkers = ['[Imagen]', '[album]', '[album recibido]', '[Imagen received from user]', 'imagen received', 'album recibido', 'image'];
+    let cleanContent = content;
+    for (const marker of imageMarkers) {
+      cleanContent = cleanContent.replace(new RegExp(marker, 'gi'), '').trim();
     }
-
-    if (!phone) {
-      console.log('Missing phone in payload');
-      return NextResponse.json({ error: 'Missing data' }, { status: 400 });
-    }
-
-    // If no text content, skip empty messages
-    if (!messageContent) {
-       console.log(`Skipping empty message of type: ${lastMsgType}`);
-       return NextResponse.json({ success: true, skipped: 'empty' });
-    }
-
+    
+    // Check if it's ONLY an image (no real text content after removing markers)
+    const isOnlyImage = !cleanContent || cleanContent.length < 2;
+    
+    console.log('[DEBUG] phone:', phone, '| raw:', content, '| clean:', cleanContent, '| isOnlyImage:', isOnlyImage, '| msgType:', msgType);
+    
     const chatId = phone.replace(/\D/g, '').slice(-10);
-    console.log(`Processing incoming message from ${phone} (chatId: ${chatId})`);
-
-    const message: Message = {
-      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
-      chatId,
-      content: messageContent,
-      sender: 'user',
-      timestamp: Date.now(),
-      status: 'delivered',
-    };
-
-    // Initialize Firebase
     const db = getFirebaseDB();
-    const dbRef = ref(db);
+    const msgId = 'm_' + Date.now();
     
-    // Check if chat exists
-    const chatSnapshot = await get(child(dbRef, `chats/${chatId}`));
-    let chatData = chatSnapshot.val();
-    let aiEnabled = true;
-
-    if (chatData) {
-      aiEnabled = chatData.aiEnabled !== false; // default true if not set
-      // Update existing chat
-      await update(ref(db, `chats/${chatId}`), {
-        lastMessage: messageContent,
+    // If ONLY image (no real text), save and EXIT silently
+    if (isOnlyImage || msgType === 'image') {
+      const msgData: Message = { id: msgId, chatId, content: content || '[Imagen]', sender: 'user', timestamp: Date.now(), status: 'delivered' };
+      
+      const chatSnap = await get(child(ref(db), 'chats/' + chatId));
+      const oldChat = chatSnap.val() || {};
+      
+      await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
+      await update(ref(db, 'chats/' + chatId), { 
+        lastMessage: content || '[Imagen]', 
         lastMessageTime: Date.now(),
-        unreadCount: (chatData.unreadCount || 0) + 1
+        unreadCount: (oldChat.unreadCount || 0) + 1 
       });
-    } else {
-      // Create new chat
-      chatData = {
-        id: chatId,
-        phone: phone,
-        name: messages[0]?.from_name || phone,
-        lastMessage: messageContent,
-        lastMessageTime: Date.now(),
-        unreadCount: 1,
-        aiEnabled: true,
-      };
-      await set(ref(db, `chats/${chatId}`), chatData);
-      console.log('Created new chat:', chatId);
+      console.log('[IMAGE-ONLY] Guardada. Sonia calla.');
+      return NextResponse.json({ success: true, action: 'image_only_silent' });
     }
     
-    // Save the incoming message
-    await set(ref(db, `messages/${chatId}/${message.id}`), message);
-    console.log('Message saved to DB');
+    // Has REAL text - normal flow with AI
+    const msgData: Message = { id: msgId, chatId, content, sender: 'user', timestamp: Date.now(), status: 'delivered' };
     
-    // Trigger AI response if enabled
-    if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN && shouldRespond()) {
-      messageCount.count++;
+    const chatSnap = await get(child(ref(db), 'chats/' + chatId));
+    const oldChat = chatSnap.val() || {};
+    const aiEnabled = oldChat.aiEnabled !== false;
+    
+    await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
+    await update(ref(db, 'chats/' + chatId), { 
+      lastMessage: content, 
+      lastMessageTime: Date.now(),
+      unreadCount: (oldChat.unreadCount || 0) + 1,
+      aiEnabled 
+    });
+    
+    // Get message history for AI context
+    const histSnap = await get(child(ref(db), 'messages/' + chatId));
+    const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
+    const history = allMsgs.map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
+    
+    // Auto-register case
+    const allContent = history + '\n' + content;
+    const isReembolso = history.toLowerCase().includes('reembolso') || content.toLowerCase().includes('reembolso');
+    const hasBankData = /nombre|cedula|telefono|cuenta|corriente|ahorro/i.test(allContent) || /\d{5,9}/.test(allContent.replace(/\s/g, ''));
+    const hasImages = /\[imagen|\[image|album|received/i.test(history) || /\[imagen|\[image|album|received/i.test(content);
+    const hasCase = (await get(child(ref(db), 'casos_reembolso/' + chatId))).exists();
+    
+    if (!hasCase && isReembolso && hasBankData && hasImages) {
+      const lines = allContent.split('\n').filter(Boolean);
+      let nombre = 'Usuario', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
       
-      // FIRE AND FORGET - Don't wait for setTimeout in serverless, do it immediately but don't block
-      // Vercel serverless functions die when the response is sent. We must do the API calls BEFORE returning.
+      for (const line of lines) {
+        const clean = line.replace(/\s/g, '');
+        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line) && !line.includes('VOLTAJE')) nombre = line;
+        if (!telefono && /0\d{10}/.test(clean)) { const m = clean.match(/0\d{10}/); if (m) telefono = m[0]; }
+        if (!cuenta && clean.length >= 20) { const m = clean.match(/\d{20}/); if (m) cuenta = m[0].padStart(20, '0'); }
+        if (!cedula && /\d{5,9}/.test(clean) && clean.length >= 5 && !clean.startsWith('0') && clean !== telefono && clean !== cuenta) { const m = clean.match(/\d{5,9}/); if (m) cedula = m[0]; }
+        if (line.toLowerCase().includes('ahorro')) tipo = 'Ahorro';
+        else if (line.toLowerCase().includes('visa')) tipo = 'Visa';
+      }
+      
+      const caso = {
+        caso_id: 'CASO-' + Date.now(),
+        fecha_primer_contacto: new Date(Date.now() - 30*60000).toISOString(),
+        fecha_registro_caso: new Date().toISOString(),
+        canal: 'WhatsApp',
+        agente: 'SONIA',
+        datos_usuario: { nombre_completo: nombre, cedula, telefono, numero_cuenta: cuenta, tipo_cuenta: tipo },
+        evidencias: { captura_historial_operaciones: 'Si', captura_billetera_app: 'Si', captura_movimientos_bancarios: 'Si' },
+        estado_caso: 'pendiente_validacion'
+      };
+      await set(ref(db, 'casos_reembolso/' + chatId), caso);
+    }
+    
+    // AI Response (only for text messages - SAFETY CHECK)
+    if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN) {
+      // FINAL CHECK: If content has image markers, skip AI completely
+      const hasImageMarkers = /\[imagen\]|\[album\]|imagen received|album reci/i.test(content.toLowerCase());
+      if (hasImageMarkers || isOnlyImage) {
+        console.log('[SAFETY] Skipping AI - image detected in content');
+        return NextResponse.json({ success: true, action: 'skipped_ai_image_detected' });
+      }
+      
+      let prompt = 'Eres SONIA de VOLTAJE PLUS. FLUJO: Saludar (1 vez) "¡Hola! 👋 Soy Sonia.¿En qué te ayudo?". Si pide reembolso "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si tiene todo "¡Perfecto! ✅ Caso registrado. Te contactaremos". REGLAS: 1.NO repeat 2.NO saludar dos veces 3.NO notas internas 4.UNA respuesta por turno';
       
       try {
-        console.log('Calling Gemini API directly...');
-        
-        // Fetch system prompt from Firebase or use default
-        let systemPrompt = `Eres un asistente de atención al cliente profesional, amigable y eficiente de NOVA TECH AI. 
-Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
-        
-        try {
-          const promptSnap = await get(child(dbRef, 'system/prompt'));
-          if (promptSnap.exists() && promptSnap.val()) {
-            systemPrompt = promptSnap.val();
-            console.log('Loaded custom system prompt from DB');
-          }
-        } catch (e) {
-          console.log('Using default prompt');
+        const pSnap = await get(child(ref(db), 'system/prompt'));
+        if (pSnap.exists()) {
+          const pd = pSnap.val();
+          if (typeof pd === 'string' && pd.length > 10) prompt = pd;
+          else if (pd && pd.value) prompt = pd.value;
         }
-        
-        // We fetch the history for context
-        const historySnap = await get(child(dbRef, `messages/${chatId}`));
-        const messagesObj = historySnap.val() || {};
-        const chatMessages = Object.values(messagesObj).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
-        
-        const historyText = chatMessages
-          .slice(-10)
-          .map((m: Message) => `${m.sender === 'agent' ? 'Agente' : 'Cliente'}: ${m.content}`)
-          .join('\n');
-
-        // Check if user confirmed sending all requirements for reembolso case
-        // Auto-register case when user confirms AND we haven't registered one yet
-        let userConfirm = messageContent.toLowerCase();
-        let looksLikeReembolso = historyText.toLowerCase().includes('reembolso') || historyText.toLowerCase().includes('volTAJE');
-        
-        // Detect bank data in current message or history
-        let currentHasBankData = messageContent.match(/nombre|cedula|telefono|cuenta|corriente|ahorro|visa|banesco|provincial|venezuela/i) || historyText.toLowerCase().match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
-        let currentHasImages = messageContent.toLowerCase().includes('[imagen') || messageContent.toLowerCase().includes('[image') || messageContent.toLowerCase().includes('captura') || historyText.toLowerCase().includes('[imagen') || historyText.toLowerCase().includes('[image') || historyText.toLowerCase().includes('captura');
-        
-        // Check if we have data in history too
-        let hasBankData = historyText.toLowerCase().match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
-        let hasImages = historyText.toLowerCase().includes('[imagen') || historyText.toLowerCase().includes('[image') || historyText.toLowerCase().includes('captura');
-        let alreadyHasCaso = (await get(child(dbRef, `casos_reembolso/${chatId}`))).exists();
-        
-        // Auto-register when: has reembolso context + bank data + images + NOT already registered
-        if (!alreadyHasCaso && looksLikeReembolso && (currentHasBankData || hasBankData) && (currentHasImages || hasImages)) {
-          
-          console.log('Auto-registering reembolso case automatically');
-          
-          // Extract user data from context - try to find all data
-          let allContent = historyText + '\n' + messageContent;
-          
-          // Try multiple patterns for each field
-          let cedulaMatch = allContent.match(/(\d{5,8})/);
-          let telefonoMatch = allContent.match(/0(4\d{2})\d{7}/) || allContent.match(/041\d{8}/);
-          let cuentaMatch = allContent.match(/0\d{20}/) || allContent.match(/01\d{19}/);
-          
-          // Get name - try to find a proper name
-          let lines = allContent.split('\n').filter(l => l.trim().length > 0);
-          let nombre = 'Usuario';
-          for (let line of lines) {
-            if (line.includes('Nombre') || line.includes('nombre')) {
-              let parts = line.split(':');
-              if (parts[1]) nombre = parts[1].trim();
-            } else if (line.match(/^[A-Z][a-z]+\s[A-Z][a-z]+$/) && !line.includes('VOLTAJE') && !line.includes('Sonia')) {
-              nombre = line.trim();
-            }
-          }
-          
-          const casoData = {
-            caso_id: chatId,
-            fecha_primer_contacto: new Date(Date.now() - 30*60000).toISOString(),
-            fecha_registro_caso: new Date().toISOString(),
-            canal: 'WhatsApp',
-            agente: 'SONIA — VOLTAJE PLUS',
-            datos_usuario: {
-              nombre_completo: nombre,
-              cedula: cedulaMatch ? cedulaMatch[1] : '',
-              telefono: telefonoMatch ? telefonoMatch[0] : '',
-              numero_cuenta: cuentaMatch ? cuentaMatch[0] : '',
-              tipo_cuenta: allContent.toLowerCase().includes('corriente') ? 'Corriente' : 'Ahorro'
-            },
-            evidencias: {
-              captura_historial_operaciones: '[Imagen recibida]',
-              captura_billetera_app: '[Imagen recibida]',
-              captura_movimientos_bancarios: '[Imagen recibida]'
-            },
-            estado_caso: 'pendiente_validacion'
-          };
-          
-          try {
-            await set(ref(db, `casos_reembolso/${chatId}`), casoData);
-            console.log('Caso de reembolso auto-registrado:', chatId);
-          } catch (e) {
-            console.error('Error auto-registrando caso:', e);
-          }
-        }
-
-        const prompt = `${systemPrompt}
-
-Historial:
-${historyText}
-
-Nuevo mensaje: ${messageContent}`;
-
-        const aiResponse = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.7,
-              },
-            }),
-          }
-        );
-
-        if (!aiResponse.ok) {
-           const errText = await aiResponse.text();
-           console.error('Gemini API Error:', errText);
-           await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
-             id: `err_${Date.now()}`, chatId, content: `Error en IA (Gemini): ${errText}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
-           });
-        } else {
-          const aiData = await aiResponse.json();
-          const aiText = aiData.candidates?.[0]?.content?.parts?.[0]?.text;
-
-          if (aiText) {
-            console.log('Sending AI response via WHAPI...');
-            
-            const whapiRes = await fetch(`${WHAPI_BASE_URL}/messages/text`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${WHAPI_TOKEN}`,
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-              },
-              body: JSON.stringify({
-                to: phone, // using the full phone/chat_id
-                body: aiText,
-              }),
-            });
-
-            if (!whapiRes.ok) {
-               const errText = await whapiRes.text();
-               console.error('WHAPI Send Error:', errText);
-               await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
-                 id: `err_${Date.now()}`, chatId, content: `Error al enviar WHAPI: ${errText}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
-               });
-            } else {
-              const aiMsg: Message = {
-                id: `ai_${Date.now()}`,
-                chatId,
-                content: aiText,
-                sender: 'agent',
-                timestamp: Date.now(),
-                status: 'sent',
-              };
-              
-              // Save AI message to DB
-              await set(ref(db, `messages/${chatId}/${aiMsg.id}`), aiMsg);
-              await update(ref(db, `chats/${chatId}`), {
-                lastMessage: aiText,
-                lastMessageTime: Date.now()
-              });
-              console.log('AI response sent and saved');
-            }
-          }
-        }
-      } catch (e: any) {
-        console.error('AI Processing Error:', e);
-        await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
-           id: `err_${Date.now()}`, chatId, content: `Error interno procesando IA: ${e.message}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
+      } catch {}
+      
+      const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
+      const fullPrompt = prompt + '\n\n' + recent + '\n\nU: ' + content;
+      
+      try {
+        const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
         });
-      }
-    } else {
-       const reason = `No respondo. aiEnabled:${aiEnabled}, GOOGLE_API_KEY:${!!GOOGLE_API_KEY}, WHAPI_TOKEN:${!!WHAPI_TOKEN}`;
-       console.log(reason);
-       if (!GOOGLE_API_KEY || !WHAPI_TOKEN) {
-         await set(ref(db, `messages/${chatId}/err_${Date.now()}`), {
-            id: `err_${Date.now()}`, chatId, content: `Error de configuración: Faltan variables de entorno. ${reason}`, sender: 'agent', timestamp: Date.now(), status: 'sent'
-         });
-       }
+        
+        if (res.ok) {
+          const data = await res.json();
+          const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          if (reply) {
+            await fetch(WHAPI_BASE_URL + '/messages/text', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ to: phone, body: reply })
+            });
+            const aiId = 'a_' + Date.now();
+            const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
+            await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
+            await update(ref(db, 'chats/' + chatId), { lastMessage: reply, lastMessageTime: Date.now() });
+            console.log('[SONIA] Respondió:', reply.substring(0, 50));
+          }
+        }
+      } catch (e) { console.error(e); }
     }
-
+    
     return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Webhook processing error:', error);
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 });
-  }
+  } catch (e) { console.error(e); return NextResponse.json({ error: 'Error' }, { status: 500 }); }
 }
 
-export async function GET(request: NextRequest) {
-  const mode = request.nextUrl.searchParams.get('hub.mode');
-  const challenge = request.nextUrl.searchParams.get('hub.challenge');
-
-  if (mode === 'subscribe') {
-    return new NextResponse(challenge, { status: 200 });
-  }
-
-  return NextResponse.json({ status: 'ok', message: 'NOVA TECH AI webhook' });
+export async function GET(req: NextRequest) {
+  const mode = req.nextUrl.searchParams.get('hub.mode');
+  const challenge = req.nextUrl.searchParams.get('hub.challenge');
+  if (mode === 'subscribe') return new NextResponse(challenge, { status: 200 });
+  return NextResponse.json({ ok: true });
 }
