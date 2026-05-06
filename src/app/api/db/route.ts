@@ -12,7 +12,15 @@ export async function GET(request: NextRequest) {
     if (action === 'getSystemPrompt') {
       const snapshot = await get(child(dbRef, 'system/prompt'));
       if (snapshot.exists()) {
-        return NextResponse.json({ prompt: snapshot.val() });
+        let promptData = snapshot.val();
+        if (typeof promptData === 'string') {
+          return NextResponse.json({ prompt: promptData });
+        } else if (promptData && typeof promptData.value === 'string') {
+          return NextResponse.json({ prompt: promptData.value });
+        } else if (promptData && typeof promptData.prompt === 'string') {
+          return NextResponse.json({ prompt: promptData.prompt });
+        }
+        return NextResponse.json({ prompt: null });
       }
       return NextResponse.json({ prompt: null });
     }

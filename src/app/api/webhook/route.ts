@@ -40,7 +40,16 @@ if (isImageMsg) {
       imgCount = imgCount + 1;
       const msgData: Message = { id: msgId, chatId, content: '[Imagen] #' + imgCount, sender: 'user', timestamp: Date.now(), status: 'delivered' };
       await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-      await update(ref(db, 'chats/' + chatId), { lastMessage: '[Imagen]', lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, imageCount: imgCount });
+      const imgUpdate: any = { 
+        lastMessage: '[Imagen]', 
+        lastMessageTime: Date.now(), 
+        unreadCount: (oldChat.unreadCount || 0) + 1, 
+        imageCount: imgCount,
+        phone: oldChat.phone || phone
+      };
+      if (msg.from_name && !oldChat.name) imgUpdate.name = msg.from_name;
+      
+      await update(ref(db, 'chats/' + chatId), imgUpdate);
       
       console.log('[IMG] Count:', imgCount, '/3');
       
@@ -62,7 +71,17 @@ if (isImageMsg) {
     oldChat = (await get(child(ref(db), 'chats/' + chatId))).val() || {};
     const aiEnabled = oldChat.aiEnabled !== false;
     await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-    await update(ref(db, 'chats/' + chatId), { lastMessage: content, lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, aiEnabled });
+    const chatUpdate: any = { 
+      lastMessage: content, 
+      lastMessageTime: Date.now(), 
+      unreadCount: (oldChat.unreadCount || 0) + 1, 
+      aiEnabled,
+      phone: oldChat.phone || phone
+    };
+    if ((msg.from_name || msg.pushname) && !oldChat.name) {
+      chatUpdate.name = msg.from_name || msg.pushname;
+    }
+    await update(ref(db, 'chats/' + chatId), chatUpdate);
     
     // AUTO-REGISTER CASE: If user sends bank data (name + cedula + phone + account)
     const hasName = /[A-Z][a-z]+\s[A-Z][a-z]+/.test(content);
@@ -74,18 +93,19 @@ if (isImageMsg) {
     if (!hasCase && hasName && hasCedula && hasPhone && hasAccount) {
       // Extract data
       const lines = content.split('\n');
-      let nombre = 'Usuario', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
+      let nombre = '', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
       for (const line of lines) {
         const clean = line.replace(/\s/g, '');
-        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line)) nombre = line;
+        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line)) nombre = line.trim();
         if (!telefono && /0\d{10}/.test(clean)) telefono = clean.match(/0\d{10}/)?.[0] || '';
         if (!cuenta && /\d{20,}/.test(clean)) cuenta = clean.match(/\d{20,}/)?.[0] || '';
         if (!cedula && /\d{5,8}/.test(clean) && clean.length < 10) cedula = clean.match(/\d{5,8}/)?.[0] || '';
         if (line.toLowerCase().includes('ahorro')) tipo = 'Ahorro';
       }
+      if (!nombre) nombre = oldChat.name || 'Usuario';
       
       // Update chat with user's name
-      await update(ref(db, 'chats/' + chatId), { name: nombre, phone: oldChat.phone });
+      await update(ref(db, 'chats/' + chatId), { name: nombre, phone: oldChat.phone || phone });
       
       const caso = {
         caso_id: 'CASO-' + Date.now(),
