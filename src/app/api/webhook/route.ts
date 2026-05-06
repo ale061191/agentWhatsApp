@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
     let oldChat = chatSnap.val() || {};
     let imgCount = oldChat.imageCount || 0;
     
-    if (isImageMsg) {
+if (isImageMsg) {
       imgCount = imgCount + 1;
       const msgData: Message = { id: msgId, chatId, content: '[Imagen] #' + imgCount, sender: 'user', timestamp: Date.now(), status: 'delivered' };
       await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
@@ -44,14 +44,17 @@ export async function POST(req: NextRequest) {
       
       console.log('[IMG] Count:', imgCount, '/3');
       
+      // If less than 3 images, save silently and don't call AI
       if (imgCount < 3) {
+        console.log('[IMG] Waiting for more images...');
         return NextResponse.json({ success: true });
       }
       
-      // Got 3 images - reset and trigger AI
-      imgCount = 0;
+// Got 3 images! Now reset count and trigger AI to ask for data
+      console.log('[IMG] Got 3! Triggering AI to request data...');
+      content = '[Sistema: El usuario ha enviado 3 imágenes. Ahora debe pedir los datos personales y bancarios.]';
+      // Reset image count AFTER triggering AI
       await update(ref(db, 'chats/' + chatId), { imageCount: 0 });
-      content = '[Sistema: El usuario ha enviado las 3 imágenes. Solicita datos.]';
     }
     
     // Save message
