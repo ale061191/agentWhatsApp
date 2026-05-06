@@ -104,7 +104,7 @@ export default function Sidebar() {
         {chats.map((chat) => (
           <div
             key={chat.id}
-            className={`flex items-center cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] ${
+            className={`flex items-center cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] relative ${
               selectedChatId === chat.id ? 'bg-[rgba(37,211,102,0.15)] border-l-4 border-l-[#25d366]' : ''
             }`}
             style={{ padding: '10px 12px', gap: '10px' }}
@@ -146,10 +146,10 @@ export default function Sidebar() {
             </div>
             
             {openMenuChat === chat.id && (
-              <div className="absolute right-2 top-12 z-50 bg-[#1a1a1a] border border-[rgba(37,211,102,0.3)] rounded-lg shadow-xl overflow-hidden">
+              <div className="absolute right-8 top-1/2 -translate-y-1/2 z-50 bg-[#1a1a1a] border border-[rgba(37,211,102,0.3)] rounded-lg shadow-xl overflow-hidden">
                 <button
                   onClick={() => handleDeleteChat(chat.id)}
-                  className="w-full px-4 py-2 flex items-center gap-2 text-red-400 hover:bg-red-500/20 text-sm text-left"
+                  className="w-full px-4 py-2 flex items-center gap-2 text-red-400 hover:bg-red-500/20 text-sm text-left whitespace-nowrap"
                 >
                   <Trash2 className="w-4 h-4" />
                   Eliminar chat
