@@ -133,6 +133,8 @@ export async function POST(req: NextRequest) {
       const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
       const fullPrompt = prompt + '\n\n' + recent + '\n\nU: ' + content;
       
+      console.log('[AI_CALL] Sending to Gemini. content:', content);
+      
       try {
         const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
           method: 'POST',
@@ -140,9 +142,14 @@ export async function POST(req: NextRequest) {
           body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
         });
         
+        console.log('[AI_CALL] Gemini response status:', res.status);
+        
         if (res.ok) {
           const data = await res.json();
           const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+          
+          console.log('[AI_CALL] reply:', reply ? reply.substring(0, 50) : 'NO REPLY');
+          
           if (reply) {
             await fetch(WHAPI_BASE_URL + '/messages/text', {
               method: 'POST',
@@ -156,7 +163,9 @@ export async function POST(req: NextRequest) {
             console.log('[SONIA] Respondió:', reply.substring(0, 50));
           }
         }
-      } catch (e) { console.error(e); }
+      } catch (e) { console.error('[AI_ERROR]', e); }
+    } else {
+      console.log('[AI_SKIP] aiEnabled:', aiEnabled, 'GOOGLE_API_KEY:', !!GOOGLE_API_KEY, 'WHAPI_TOKEN:', !!WHAPI_TOKEN);
     }
     
     return NextResponse.json({ success: true });
