@@ -29,10 +29,7 @@ export async function POST(req: NextRequest) {
     const msgId = 'm_' + Date.now();
     
     // DETECT IMAGE
-    const isImageMsg = msgType === 'image' || 
-      content === '[Imagen]' || 
-      content.includes('Imagen received') ||
-      content.includes('album');
+    const isImageMsg = msgType === 'image' || content === '[Imagen]';
     
     const chatSnap = await get(child(ref(db), 'chats/' + chatId));
     let oldChat = chatSnap.val() || {};
