@@ -8,13 +8,19 @@ const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
 export async function POST(req: NextRequest) {
+  console.log('[WEBHOOK] Starting webhook handler');
   try {
     const body = await req.json();
     const msgs = body.messages || [];
+    console.log('[WEBHOOK] msgs count:', msgs.length);
     if (!msgs.length) return NextResponse.json({ error: 'No messages' }, { status: 400 });
     
     const msg = msgs[0];
-    if (msg.from_me) return NextResponse.json({ success: true });
+    console.log('[WEBHOOK] first msg:', JSON.stringify(msg).substring(0, 200));
+    if (msg.from_me) {
+      console.log('[WEBHOOK] from_me is true, ignoring');
+      return NextResponse.json({ success: true });
+    }
     
     const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
     let content = msg.text?.body || '';
