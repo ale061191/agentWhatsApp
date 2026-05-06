@@ -122,13 +122,14 @@ export default function Sidebar() {
       </div>
 
       <div className="p-[12px_16px] glass border-t border-[rgba(37,211,102,0.2)]">
-        <div className="py-[1px] text-center text-xs text-gray-500">
+        <div className="py-[1px] text-center text-xs text-gray-500" style={{ marginBottom: '1px', paddingTop: '10px', paddingBottom: '10px' }}>
           <span className="text-[#25d366]">NOVA TECH AI</span> v1.0
         </div>
         <div className="flex flex-col">
           <button 
             onClick={() => setShowSystemPrompt(true)}
             className="w-full py-[1px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[2px] transition-colors text-sm text-gray-400 hover:text-white"
+            style={{ marginBottom: '1px', marginTop: '0px', paddingTop: '10px', paddingBottom: '10px' }}
           >
             <BookOpen className="w-4 h-4" />
             <span>System Prompt</span>
@@ -136,6 +137,7 @@ export default function Sidebar() {
           <button 
             onClick={() => setShowCasosReembolso(true)}
             className="w-full py-[1px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[2px] transition-colors text-sm text-gray-400 hover:text-white"
+            style={{ marginTop: '0px', marginBottom: '1px', paddingTop: '10px', paddingBottom: '10px' }}
           >
             <CreditCard className="w-4 h-4" />
             <span>Casos Reembolso</span>
