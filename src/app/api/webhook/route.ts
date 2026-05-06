@@ -7,7 +7,7 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
+const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. IMPORTANTE: NUNCA saludes si el usuario ya te saludó antes. Solo responde a lo que el usuario pregunta. FLUJO: Si dice "hola" o "buenas" ->solo responder brevemente. Si pide reembolsos ->pedir 3 imágenes + datos. Si tiene todo->"¡Perfecto! ✅ Caso registrado". REGLAS: 1.NO saludar dos veces 2.NO "Entendido" 3.NO notas internas 4.UNA respuesta por mensaje`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -110,8 +110,8 @@ if (isImageMsg) {
       if (pSnap.exists()) customPrompt = pSnap.val() || ''; 
     } catch {}
     const prompt = customPrompt || SYSTEM_PROMPT;
-    const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + content;
+    const recent = allMsgs.slice(-6).map(m => (m.sender === 'agent' ? 'A:' : 'U:') + ' ' + m.content).join('\n');
+    const fullPrompt = prompt + '\n\nMensajes recientes:\n' + recent + '\n\nNuevo mensaje del usuario: ' + content;
     
     console.log('[AI] Calling...');
     
