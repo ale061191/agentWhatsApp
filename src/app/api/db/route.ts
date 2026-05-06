@@ -133,6 +133,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    if (action === 'clearUnreadCount') {
+      if (!chatId) {
+        return NextResponse.json({ error: 'Missing chatId' }, { status: 400 });
+      }
+
+      await update(ref(db, `chats/${chatId}`), { unreadCount: 0 });
+
+      return NextResponse.json({ success: true });
+    }
+
     if (action === 'saveSystemPrompt') {
       if (!prompt) {
         return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });

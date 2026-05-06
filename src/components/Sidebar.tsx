@@ -104,7 +104,19 @@ export default function Sidebar() {
         {chats.map((chat) => (
           <div
             key={chat.id}
-            onClick={() => setSelectedChat(chat.id)}
+            onClick={() => {
+                setSelectedChat(chat.id);
+                if (chat.unreadCount > 0) {
+                  fetch('/api/db', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      action: 'clearUnreadCount',
+                      chatId: chat.id,
+                    }),
+                  }).catch(() => {});
+                }
+              }}
             className={`flex items-center cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] relative ${
               selectedChatId === chat.id ? 'bg-[rgba(37,211,102,0.15)] border-l-4 border-l-[#25d366]' : ''
             }`}
@@ -138,7 +150,7 @@ export default function Sidebar() {
                 <span className="text-sm text-gray-400 truncate">
                   {chat.lastMessage || 'Sin mensajes'}
                 </span>
-                {chat.unreadCount > 0 && (
+                {chat.unreadCount > 0 && chat.id !== selectedChatId && (
                   <span className="min-w-[22px] h-[22px] px-1.5 ml-2 bg-gradient-to-r from-[#25d366] to-[#39ff14] rounded-full text-black text-xs font-bold flex items-center justify-center neon-glow shrink-0">
                     {chat.unreadCount}
                   </span>
