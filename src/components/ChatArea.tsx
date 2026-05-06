@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '@/store/useStore';
-import { Send, MoreVertical, Bot, Paperclip, Smile, Phone, Video, Settings } from 'lucide-react';
+import { Send, MoreVertical, Bot, Paperclip, Smile, Phone, Video, Settings, Trash2 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Message } from '@/types';
 
@@ -132,9 +132,9 @@ export default function ChatArea() {
 
       {showSettings && (
         <div className="glass p-4 border-b border-[rgba(37,211,102,0.2)]">
-          <div className="glass-card p-4 rounded-xl">
+          <div className="glass-card p-4 rounded-xl space-y-3">
             <h3 className="text-[#25d366] font-bold mb-3">Configuración NOVA TECH AI</h3>
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between">
               <span className="text-sm text-gray-400">Estado del Asistente</span>
               <span className={`text-sm font-bold ${selectedChat?.aiEnabled ? 'text-[#39ff14]' : 'text-red-500'}`}>
                 {selectedChat?.aiEnabled ? 'Activo' : 'Desactivado'}
@@ -144,6 +144,24 @@ export default function ChatArea() {
               <span className="text-sm text-gray-400">Mensajes hoy</span>
               <span className="text-sm text-white">{chatMessages.length}</span>
             </div>
+            <hr className="border-[rgba(37,211,102,0.2)]" />
+            <button
+              onClick={async () => {
+                if (confirm('¿Vaciar todos los mensajes de este chat?')) {
+                  await fetch('/api/db', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'deleteChat', chatId: selectedChatId }),
+                  });
+                  setShowSettings(false);
+                  window.location.reload();
+                }
+              }}
+              className="w-full py-2 px-3 flex items-center justify-center gap-2 text-red-400 hover:bg-red-500/20 rounded-lg text-sm"
+            >
+              <Trash2 className="w-4 h-4" />
+              Vaciar chat
+            </button>
           </div>
         </div>
       )}
