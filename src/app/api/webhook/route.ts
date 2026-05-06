@@ -126,10 +126,11 @@ if (isImageMsg) {
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (reply) {
+          console.log('WA send to:', phone, '| msg:', reply.substring(0,20));
           await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: chatId, body: reply })
+            body: JSON.stringify({ to: phone, body: reply })
           });
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
