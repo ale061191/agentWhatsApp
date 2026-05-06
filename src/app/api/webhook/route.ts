@@ -167,21 +167,40 @@ Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
         // Auto-register case when user confirms AND we haven't registered one yet
         let userConfirm = messageContent.toLowerCase();
         let looksLikeReembolso = historyText.toLowerCase().includes('reembolso') || historyText.toLowerCase().includes('volTAJE');
-        let hasBankData = historyText.match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
+        
+        // Detect bank data in current message or history
+        let currentHasBankData = messageContent.match(/nombre|cedula|telefono|cuenta|corriente|ahorro|visa|banesco|provincial|venezuela/i) || historyText.toLowerCase().match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
+        let currentHasImages = messageContent.toLowerCase().includes('[imagen') || messageContent.toLowerCase().includes('[image') || messageContent.toLowerCase().includes('captura') || historyText.toLowerCase().includes('[imagen') || historyText.toLowerCase().includes('[image') || historyText.toLowerCase().includes('captura');
+        
+        // Check if we have data in history too
+        let hasBankData = historyText.toLowerCase().match(/nombre|cedula|telefono|cuenta|corriente|ahorro/i);
         let hasImages = historyText.toLowerCase().includes('[imagen') || historyText.toLowerCase().includes('[image') || historyText.toLowerCase().includes('captura');
         let alreadyHasCaso = (await get(child(dbRef, `casos_reembolso/${chatId}`))).exists();
         
-        if (!alreadyHasCaso && looksLikeReembolso && hasBankData && hasImages && 
-            (userConfirm.includes('ya') || userConfirm.includes('tienes') || userConfirm.includes('toda') || userConfirm.includes('completo') || userConfirm.includes('enviado') || userConfirm.includes('toda la info'))) {
+        // Auto-register when: has reembolso context + bank data + images + NOT already registered
+        if (!alreadyHasCaso && looksLikeReembolso && (currentHasBankData || hasBankData) && (currentHasImages || hasImages)) {
           
-          console.log('Auto-registering reembolso case from user confirmation');
+          console.log('Auto-registering reembolso case automatically');
           
-          // Extract user data from context
+          // Extract user data from context - try to find all data
           let allContent = historyText + '\n' + messageContent;
-          let cedulaMatch = allContent.match(/(\d{6,8})/);
-          let telefonoMatch = allContent.match(/0(414|416|424|426|412|4\d{2})\d{7}/);
-          let cuentaMatch = allContent.match(/01\d{19}/);
-          let nombreMatch = allContent.match(/([A-Z][a-z]+\s+[A-Z][a-z]+)/);
+          
+          // Try multiple patterns for each field
+          let cedulaMatch = allContent.match(/(\d{5,8})/);
+          let telefonoMatch = allContent.match(/0(4\d{2})\d{7}/) || allContent.match(/041\d{8}/);
+          let cuentaMatch = allContent.match(/0\d{20}/) || allContent.match(/01\d{19}/);
+          
+          // Get name - try to find a proper name
+          let lines = allContent.split('\n').filter(l => l.trim().length > 0);
+          let nombre = 'Usuario';
+          for (let line of lines) {
+            if (line.includes('Nombre') || line.includes('nombre')) {
+              let parts = line.split(':');
+              if (parts[1]) nombre = parts[1].trim();
+            } else if (line.match(/^[A-Z][a-z]+\s[A-Z][a-z]+$/) && !line.includes('VOLTAJE') && !line.includes('Sonia')) {
+              nombre = line.trim();
+            }
+          }
           
           const casoData = {
             caso_id: chatId,
@@ -190,7 +209,7 @@ Responde de manera profesional, breve y útil en máximo 2 párrafos.`;
             canal: 'WhatsApp',
             agente: 'SONIA — VOLTAJE PLUS',
             datos_usuario: {
-              nombre_completo: nombreMatch ? nombreMatch[1] : 'Usuario',
+              nombre_completo: nombre,
               cedula: cedulaMatch ? cedulaMatch[1] : '',
               telefono: telefonoMatch ? telefonoMatch[0] : '',
               numero_cuenta: cuentaMatch ? cuentaMatch[0] : '',
