@@ -116,38 +116,27 @@ if (isImageMsg) {
     console.log('[AI] Calling...');
     
     if (GOOGLE_API_KEY && WHAPI_TOKEN) {
-      console.log('[AI] Calling Gemini... prompt:', fullPrompt.substring(0, 100));
       const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
       });
-      const resText = await res.text();
-      console.log('[AI] Gemini status:', res.status);
       
       if (res.ok) {
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (reply) {
-          console.log('[AI] Reply generated, sending to WhatsApp phone:', phone);
-          const sendRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
+          await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
             body: JSON.stringify({ to: phone, body: reply })
           });
-          console.log('[AI] WhatsApp status:', sendRes.status, 'response:', await sendRes.text());
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
           await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
-          console.log('[AI] Reply:', reply.substring(0, 50));
-        } else {
-          console.log('[AI] No reply from Gemini, data:', JSON.stringify(data).substring(0, 200));
+          console.log('[AI] Reply:', reply.substring(0, 30));
         }
-      } else {
-        console.log('[AI] Gemini error:', resText);
       }
-    } else {
-      console.log('[AI] Missing GOOGLE_API_KEY or WHAPI_TOKEN');
     }
     
     return NextResponse.json({ success: true });
