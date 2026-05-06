@@ -7,7 +7,7 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. FLUJO: SALUDAR una vez: "¡Hola! 👋 Te escribe Sonia.¿En qué te ayudo?". Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura historial app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". VALIDACIÓN: "¡Perfecto! ✅ Caso registrado. Te contactaremos". REGLAS: 1.NO repeat 2.NO saludar dos veces 3.NO notas internas 4.UNA respuesta por turno 5.Nunca decir que no puedes ver imágenes`;
+const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -60,6 +60,40 @@ export async function POST(req: NextRequest) {
     const aiEnabled = oldChat.aiEnabled !== false;
     await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
     await update(ref(db, 'chats/' + chatId), { lastMessage: content, lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, aiEnabled });
+    
+    // AUTO-REGISTER CASE: If user sends bank data (name + cedula + phone + account)
+    const hasName = /[A-Z][a-z]+\s[A-Z][a-z]+/.test(content);
+    const hasCedula = /\d{5,8}/.test(content);
+    const hasPhone = /0\d{10}/.test(content);
+    const hasAccount = /\d{20}/.test(content);
+    const hasCase = (await get(child(ref(db), 'casos_reembolso/' + chatId))).exists();
+    
+    if (!hasCase && hasName && hasCedula && hasPhone && hasAccount) {
+      // Extract data
+      const lines = content.split('\n');
+      let nombre = 'Usuario', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
+      for (const line of lines) {
+        const clean = line.replace(/\s/g, '');
+        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line)) nombre = line;
+        if (!telefono && /0\d{10}/.test(clean)) telefono = clean.match(/0\d{10}/)?.[0] || '';
+        if (!cuenta && /\d{20,}/.test(clean)) cuenta = clean.match(/\d{20,}/)?.[0] || '';
+        if (!cedula && /\d{5,8}/.test(clean) && clean.length < 10) cedula = clean.match(/\d{5,8}/)?.[0] || '';
+        if (line.toLowerCase().includes('ahorro')) tipo = 'Ahorro';
+      }
+      
+      const caso = {
+        caso_id: 'CASO-' + Date.now(),
+        fecha_primer_contacto: new Date(Date.now() - 30*60000).toISOString(),
+        fecha_registro_caso: new Date().toISOString(),
+        canal: 'WhatsApp',
+        agente: 'SONIA',
+        datos_usuario: { nombre_completo: nombre, cedula, telefono, numero_cuenta: cuenta, tipo_cuenta: tipo },
+       estado_caso: 'pendiente_validacion',
+        estado_validacion: 'completado'
+      };
+      await set(ref(db, 'casos_reembolso/' + chatId), caso);
+      console.log('[AUTO] Caso registrado automáticamente');
+    }
     
     if (!aiEnabled) return NextResponse.json({ success: true });
     
