@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
     if (aiEnabled && GOOGLE_API_KEY && WHAPI_TOKEN) {
       // FINAL CHECK: If content has image markers, skip AI completely
       const hasImageMarkers = /\[imagen\]|\[album\]|imagen received|album reci/i.test(content.toLowerCase());
-      if (hasImageMarkers || isOnlyImage) {
+      if (hasImageMarkers) {
         console.log('[SAFETY] Skipping AI - image detected in content');
         return NextResponse.json({ success: true, action: 'skipped_ai_image_detected' });
       }
