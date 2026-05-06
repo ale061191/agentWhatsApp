@@ -7,7 +7,7 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. IMPORTANTE: NUNCA saludes si el usuario ya te saludó antes. Solo responde a lo que el usuario pregunta. FLUJO: Si dice "hola" o "buenas" ->solo responder brevemente. Si pide reembolsos ->pedir 3 imágenes + datos. Si tiene todo->"¡Perfecto! ✅ Caso registrado". REGLAS: 1.NO saludar dos veces 2.NO "Entendido" 3.NO notas internas 4.UNA respuesta por mensaje`;
+const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. IMPORTANTE: 1.NO saludar dos veces 2.NO decir "Entendido" 3.NO repetirdatos 4.NO preguntar "¿algo más?" 5.Responder solo lo necesario 6.Si tiene todo ->"¡Perfecto! ✅ Caso registrado". FLUJO: Hola->saludar. Reembolso->pedir 3 imágenes+datos. Imágenes->callar. Datos->confirmar.`;
 
 export async function POST(req: NextRequest) {
   try {
