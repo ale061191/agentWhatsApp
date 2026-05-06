@@ -125,7 +125,7 @@ export default function Sidebar() {
         <div className="py-[1px] text-center text-xs text-gray-500">
           <span className="text-[#25d366]">NOVA TECH AI</span> v1.0
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col">
           <button 
             onClick={() => setShowSystemPrompt(true)}
             className="w-full py-[1px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[2px] transition-colors text-sm text-gray-400 hover:text-white"
