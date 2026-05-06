@@ -8,8 +8,8 @@ const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
 export async function POST(req: NextRequest) {
-  console.log('[WEBHOOK] Starting webhook handler');
   try {
+    console.log('[WEBHOOK] Starting webhook handler');
     const body = await req.json();
     const msgs = body.messages || [];
     console.log('[WEBHOOK] msgs count:', msgs.length);
