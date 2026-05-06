@@ -18,12 +18,11 @@ export async function POST(req: NextRequest) {
     const msg = msgs[0];
     if (msg.from_me) return NextResponse.json({ success: true });
     
-    const phoneRaw = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
-    const phone = phoneRaw.replace(/\D/g, ''); // solo digitos para WhatsApp
+    const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
     let content = msg.text?.body || '';
     const msgType = msg.type || 'text';
     
-    const chatId = phone.slice(-10);
+    const chatId = phone.replace(/\D/g, '').slice(-10);
     const db = getFirebaseDB();
     const msgId = 'm_' + Date.now();
     
@@ -127,13 +126,11 @@ if (isImageMsg) {
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (reply) {
-          console.log('[WA] Sending to phone:', phone, 'body:', reply.substring(0, 30));
-          const waRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
+          await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: phone, body: reply })
+            body: JSON.stringify({ to: chatId, body: reply })
           });
-          console.log('[WA] WhatsApp response:', waRes.status, await waRes.text());
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
           await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
