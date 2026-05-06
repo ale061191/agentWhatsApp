@@ -104,6 +104,7 @@ export default function Sidebar() {
         {chats.map((chat) => (
           <div
             key={chat.id}
+            onClick={() => setSelectedChat(chat.id)}
             className={`flex items-center cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] relative ${
               selectedChatId === chat.id ? 'bg-[rgba(37,211,102,0.15)] border-l-4 border-l-[#25d366]' : ''
             }`}

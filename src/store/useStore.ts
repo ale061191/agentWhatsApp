@@ -15,10 +15,6 @@ export const useStore = create<AppState & { subscribeToDB: () => void }>((set, g
 
   setSelectedChat: (chatId: string | null) => {
     set({ selectedChatId: chatId });
-    if (chatId) {
-      const db = getFirebaseDB();
-      updateFirebase(ref(db, `chats/${chatId}`), { unreadCount: 0 }).catch(console.error);
-    }
   },
 
   addMessage: (chatId: string, message: Message) => set((state) => {
