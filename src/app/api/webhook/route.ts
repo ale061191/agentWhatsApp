@@ -59,11 +59,28 @@ if (isImageMsg) {
         return NextResponse.json({ success: true });
       }
       
-// Got 3 images! Now reset count and trigger AI to ask for data
-      console.log('[IMG] Got 3! Triggering AI to request data...');
-      content = '[Sistema: El usuario ha enviado 3 imágenes. Ahora debe pedir los datos personales y bancarios.]';
-      // Reset image count AFTER triggering AI
-      await update(ref(db, 'chats/' + chatId), { imageCount: 0 });
+// Got 3 images! Respond directly without calling AI to avoid duplicates
+      console.log('[IMG] Got 3! Sending hardcoded response...');
+      const thanksMsg = 'Gracias por enviarnos las capturas. Las hemos recibido correctamente. Ahora, para poder avanzar con la gestion del reembolso, por favor envianos tus datos personales y bancarios: Nombre completo, Numero de Cedula, Numero de Telefono, Numero de Cuenta bancaria y Tipo de cuenta (corriente o ahorro). Estamos atentos para seguir ayudarte.';
+      
+      // Send the response via WHAPI
+      if (WHAPI_TOKEN) {
+        await fetch(WHAPI_BASE_URL + '/messages/text', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: phone, body: thanksMsg })
+        });
+        
+        // Save AI response to messages
+        const aiId = 'a_' + Date.now();
+        const aiMsg: Message = { id: aiId, chatId, content: thanksMsg, sender: 'agent', timestamp: Date.now(), status: 'sent' };
+        await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
+        
+        // Update last message
+        await update(ref(db, 'chats/' + chatId), { lastMessage: thanksMsg, lastMessageTime: Date.now(), imageCount: 0 });
+      }
+      
+      return NextResponse.json({ success: true });
     }
     
     // Save message
