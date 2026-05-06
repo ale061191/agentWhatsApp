@@ -132,7 +132,7 @@ if (isImageMsg) {
           await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: phone, body: reply })
+            body: JSON.stringify({ to: chatId, body: reply })
           });
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
