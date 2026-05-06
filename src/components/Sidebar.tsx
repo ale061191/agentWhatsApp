@@ -93,7 +93,7 @@ export default function Sidebar() {
             }`}
             style={{ padding: '10px 12px', gap: '10px' }}
           >
-            <div className="w-14 h-14 rounded-full bg-gradient-to-br from-[#25d366] to-[#39ff14] flex items-center justify-center text-black text-sm font-bold neon-glow shrink-0">
+            <div className="w-14 h-14 rounded-full bg-[#25d366] flex items-center justify-center text-black text-sm font-bold shrink-0">
               {chat.name ? getInitials(chat.name) : chat.phone.slice(-2)}
             </div>
             
