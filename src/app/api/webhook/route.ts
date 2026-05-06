@@ -7,7 +7,7 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. IMPORTANTE: 1.NO saludar dos veces 2.NO decir "Entendido" 3.NO repetirdatos 4.NO preguntar "¿algo más?" 5.Responder solo lo necesario 6.Si tiene todo ->"¡Perfecto! ✅ Caso registrado". FLUJO: Hola->saludar. Reembolso->pedir 3 imágenes+datos. Imágenes->callar. Datos->confirmar.`;
+const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,12 +18,11 @@ export async function POST(req: NextRequest) {
     const msg = msgs[0];
     if (msg.from_me) return NextResponse.json({ success: true });
     
-    const phoneRaw = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
-    const phone = phoneRaw.replace(/\D/g, '').slice(-10); // Only keep digits, last 10
+    const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
     let content = msg.text?.body || '';
     const msgType = msg.type || 'text';
     
-    const chatId = phone;
+    const chatId = phone.replace(/\D/g, '').slice(-10);
     const db = getFirebaseDB();
     const msgId = 'm_' + Date.now();
     
@@ -41,16 +40,7 @@ if (isImageMsg) {
       imgCount = imgCount + 1;
       const msgData: Message = { id: msgId, chatId, content: '[Imagen] #' + imgCount, sender: 'user', timestamp: Date.now(), status: 'delivered' };
       await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-      const imgUpdate: any = { 
-        lastMessage: '[Imagen]', 
-        lastMessageTime: Date.now(), 
-        unreadCount: (oldChat.unreadCount || 0) + 1, 
-        imageCount: imgCount,
-        phone: oldChat.phone || phone
-      };
-      if (msg.from_name && !oldChat.name) imgUpdate.name = msg.from_name;
-      
-      await update(ref(db, 'chats/' + chatId), imgUpdate);
+      await update(ref(db, 'chats/' + chatId), { lastMessage: '[Imagen]', lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, imageCount: imgCount });
       
       console.log('[IMG] Count:', imgCount, '/3');
       
@@ -60,9 +50,10 @@ if (isImageMsg) {
         return NextResponse.json({ success: true });
       }
       
-      // Got 3 images! Reset count and trigger AI to ask for data
+// Got 3 images! Now reset count and trigger AI to ask for data
       console.log('[IMG] Got 3! Triggering AI to request data...');
-      content = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
+      content = '[Sistema: El usuario ha enviado 3 imágenes. Ahora debe pedir los datos personales y bancarios.]';
+      // Reset image count AFTER triggering AI
       await update(ref(db, 'chats/' + chatId), { imageCount: 0 });
     }
     
@@ -71,17 +62,7 @@ if (isImageMsg) {
     oldChat = (await get(child(ref(db), 'chats/' + chatId))).val() || {};
     const aiEnabled = oldChat.aiEnabled !== false;
     await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-    const chatUpdate: any = { 
-      lastMessage: content, 
-      lastMessageTime: Date.now(), 
-      unreadCount: (oldChat.unreadCount || 0) + 1, 
-      aiEnabled,
-      phone: oldChat.phone || phone
-    };
-    if ((msg.from_name || msg.pushname) && !oldChat.name) {
-      chatUpdate.name = msg.from_name || msg.pushname;
-    }
-    await update(ref(db, 'chats/' + chatId), chatUpdate);
+    await update(ref(db, 'chats/' + chatId), { lastMessage: content, lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, aiEnabled });
     
     // AUTO-REGISTER CASE: If user sends bank data (name + cedula + phone + account)
     const hasName = /[A-Z][a-z]+\s[A-Z][a-z]+/.test(content);
@@ -93,19 +74,15 @@ if (isImageMsg) {
     if (!hasCase && hasName && hasCedula && hasPhone && hasAccount) {
       // Extract data
       const lines = content.split('\n');
-      let nombre = '', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
+      let nombre = 'Usuario', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
       for (const line of lines) {
         const clean = line.replace(/\s/g, '');
-        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line)) nombre = line.trim();
+        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line)) nombre = line;
         if (!telefono && /0\d{10}/.test(clean)) telefono = clean.match(/0\d{10}/)?.[0] || '';
         if (!cuenta && /\d{20,}/.test(clean)) cuenta = clean.match(/\d{20,}/)?.[0] || '';
         if (!cedula && /\d{5,8}/.test(clean) && clean.length < 10) cedula = clean.match(/\d{5,8}/)?.[0] || '';
         if (line.toLowerCase().includes('ahorro')) tipo = 'Ahorro';
       }
-      if (!nombre) nombre = oldChat.name || 'Usuario';
-      
-      // Update chat with user's name
-      await update(ref(db, 'chats/' + chatId), { name: nombre, phone: oldChat.phone || phone });
       
       const caso = {
         caso_id: 'CASO-' + Date.now(),
@@ -118,7 +95,7 @@ if (isImageMsg) {
         estado_validacion: 'completado'
       };
       await set(ref(db, 'casos_reembolso/' + chatId), caso);
-      console.log('[AUTO] Caso y nombre registrados');
+      console.log('[AUTO] Caso registrado automáticamente');
     }
     
     if (!aiEnabled) return NextResponse.json({ success: true });
@@ -133,8 +110,8 @@ if (isImageMsg) {
       if (pSnap.exists()) customPrompt = pSnap.val() || ''; 
     } catch {}
     const prompt = customPrompt || SYSTEM_PROMPT;
-    const recent = allMsgs.slice(-6).map(m => (m.sender === 'agent' ? 'A:' : 'U:') + ' ' + m.content).join('\n');
-    const fullPrompt = prompt + '\n\nMensajes recientes:\n' + recent + '\n\nNuevo mensaje del usuario: ' + content;
+    const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
+    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + content;
     
     console.log('[AI] Calling...');
     
@@ -149,15 +126,11 @@ if (isImageMsg) {
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (reply) {
-          console.log('[AI] Sending reply to WhatsApp..., phone:', phone);
-          const sendRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
+          await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
             body: JSON.stringify({ to: phone, body: reply })
           });
-          const sendText = await sendRes.text();
-          console.log('[AI] WHAPI response status:', sendRes.status, 'body:', sendText);
-          
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
           await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
