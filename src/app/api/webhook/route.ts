@@ -127,11 +127,13 @@ if (isImageMsg) {
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (reply) {
-          await fetch(WHAPI_BASE_URL + '/messages/text', {
+          console.log('[WA] Sending to phone:', phone, 'body:', reply.substring(0, 30));
+          const waRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
             body: JSON.stringify({ to: phone, body: reply })
           });
+          console.log('[WA] WhatsApp response:', waRes.status, await waRes.text());
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
           await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
