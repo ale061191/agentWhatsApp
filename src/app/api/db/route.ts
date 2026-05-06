@@ -121,6 +121,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    if (action === 'deleteChat') {
+      if (!chatId) {
+        return NextResponse.json({ error: 'Missing chatId' }, { status: 400 });
+      }
+
+      // Delete chat and its messages
+      await set(ref(db, `chats/${chatId}`), null);
+      await set(ref(db, `messages/${chatId}`), null);
+
+      return NextResponse.json({ success: true });
+    }
+
     if (action === 'saveSystemPrompt') {
       if (!prompt) {
         return NextResponse.json({ error: 'Missing prompt' }, { status: 400 });

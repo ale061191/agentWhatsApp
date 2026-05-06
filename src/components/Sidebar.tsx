@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Bot, Search, Settings, BookOpen, CreditCard } from 'lucide-react';
+import { Bot, Search, Settings, BookOpen, CreditCard, MoreVertical, Trash2 } from 'lucide-react';
 import SystemPromptModal from './SystemPromptModal';
 import CasosReembolsoModal from './CasosReembolsoModal';
 
@@ -36,6 +36,7 @@ export default function Sidebar() {
   const [loading, setLoading] = useState(true);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showCasosReembolso, setShowCasosReembolso] = useState(false);
+  const [openMenuChat, setOpenMenuChat] = useState<string | null>(null);
 
   useEffect(() => {
     if (subscribeToDB) {
@@ -43,6 +44,22 @@ export default function Sidebar() {
       setLoading(false);
     }
   }, [subscribeToDB]);
+
+  const handleDeleteChat = async (chatId: string) => {
+    try {
+      await fetch('/api/db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'deleteChat',
+          chatId,
+        }),
+      });
+      setOpenMenuChat(null);
+    } catch (e) {
+      console.error('Error deleting chat:', e);
+    }
+  };
 
   return (
     <div className="w-[400px] h-screen glass flex flex-col box-border">
@@ -87,7 +104,6 @@ export default function Sidebar() {
         {chats.map((chat) => (
           <div
             key={chat.id}
-            onClick={() => setSelectedChat(chat.id)}
             className={`flex items-center cursor-pointer transition-all hover:bg-[rgba(37,211,102,0.1)] ${
               selectedChatId === chat.id ? 'bg-[rgba(37,211,102,0.15)] border-l-4 border-l-[#25d366]' : ''
             }`}
@@ -102,9 +118,20 @@ export default function Sidebar() {
                 <span className="font-medium text-base truncate text-white">
                   {chat.name || chat.phone}
                 </span>
-                <span className="text-xs text-[#25d366] ml-2">
-                  {formatTime(chat.lastMessageTime)}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[#25d366]">
+                    {formatTime(chat.lastMessageTime)}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuChat(openMenuChat === chat.id ? null : chat.id);
+                    }}
+                    className="p-1 hover:bg-[rgba(255,255,255,0.1] rounded-full"
+                  >
+                    <MoreVertical className="w-4 h-4 text-gray-400" />
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-between mt-1">
                 <span className="text-sm text-gray-400 truncate">
@@ -117,6 +144,18 @@ export default function Sidebar() {
                 )}
               </div>
             </div>
+            
+            {openMenuChat === chat.id && (
+              <div className="absolute right-2 top-12 z-50 bg-[#1a1a1a] border border-[rgba(37,211,102,0.3)] rounded-lg shadow-xl overflow-hidden">
+                <button
+                  onClick={() => handleDeleteChat(chat.id)}
+                  className="w-full px-4 py-2 flex items-center gap-2 text-red-400 hover:bg-red-500/20 text-sm text-left"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Eliminar chat
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
