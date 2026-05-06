@@ -18,11 +18,12 @@ export async function POST(req: NextRequest) {
     const msg = msgs[0];
     if (msg.from_me) return NextResponse.json({ success: true });
     
-    const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+    const phoneRaw = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+    const phone = phoneRaw.replace(/\D/g, ''); // solo digitos para WhatsApp
     let content = msg.text?.body || '';
     const msgType = msg.type || 'text';
     
-    const chatId = phone.replace(/\D/g, '').slice(-10);
+    const chatId = phone.slice(-10);
     const db = getFirebaseDB();
     const msgId = 'm_' + Date.now();
     
