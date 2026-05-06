@@ -7,6 +7,8 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
+const SYSTEM_PROMPT = `Eres SONIA, asistente virtual profesional de VOLTAJE PLUS. FLUJO: SALUDAR una vez: "¡Hola! 👋 Te escribe Sonia.¿En qué te ayudo?". Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura historial app 2)👛Captura billetera 3)🏦Captura banco + Tus datos: Nombre,Cédula,Teléfono,Cuenta,Tipo". VALIDACIÓN: "¡Perfecto! ✅ Caso registrado. Te contactaremos". LIMITACIÓN: "Este canal es solo para reembolsos". REGLAS: 1.NO repeat 2.NO saludar dos veces 3.NO notas internas 4.UNA respuesta por turno 5.Nunca decir que no puedes ver imágenes`;
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -24,37 +26,53 @@ export async function POST(req: NextRequest) {
     const db = getFirebaseDB();
     const msgId = 'm_' + Date.now();
     
-    // Check for image markers in content
-    const hasImageMarker = /\[imagen\]|\[album\]|imagen received|album reci/i.test(content.toLowerCase());
-    const isImageType = msgType === 'image';
+    // DETECT IMAGE - check if content is ONLY image markers
+    const isImageMsg = msgType === 'image' || 
+      content === '[Imagen]' || 
+      content === '[image]' ||
+      content.includes('Imagen received') ||
+      content.includes('album');
     
-    if (hasImageMarker || isImageType) {
-      const msgData: Message = { id: msgId, chatId, content: content || '[Imagen]', sender: 'user', timestamp: Date.now(), status: 'delivered' };
+    console.log('[DEBUG] msgType:', msgType, 'content:', content, 'isImage:', isImageMsg);
+    
+    if (isImageMsg) {
+      const msgData: Message = { id: msgId, chatId, content: '[Imagen]', sender: 'user', timestamp: Date.now(), status: 'delivered' };
       const chatSnap = await get(child(ref(db), 'chats/' + chatId));
       const oldChat = chatSnap.val() || {};
       await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-      await update(ref(db, 'chats/' + chatId), { lastMessage: content || '[Imagen]', lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1 });
-      console.log('[IMG] Saved silently');
+      await update(ref(db, 'chats/' + chatId), { lastMessage: '[Imagen]', lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1 });
+      console.log('[IMG] Silently saved');
       return NextResponse.json({ success: true });
     }
     
-    // Normal text - save and respond with AI
+    // Normal text message
     const msgData: Message = { id: msgId, chatId, content, sender: 'user', timestamp: Date.now(), status: 'delivered' };
     const chatSnap = await get(child(ref(db), 'chats/' + chatId));
     const oldChat = chatSnap.val() || {};
+    const aiEnabled = oldChat.aiEnabled !== false;
     await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-    await update(ref(db, 'chats/' + chatId), { lastMessage: content, lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, aiEnabled: oldChat.aiEnabled !== false });
+    await update(ref(db, 'chats/' + chatId), { lastMessage: content, lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, aiEnabled });
     
-    // AI Response
+    if (!aiEnabled) return NextResponse.json({ success: true });
+    
+    // Get history
+    const histSnap = await get(child(ref(db), 'messages/' + chatId));
+    const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
+    
+    // Load custom prompt from Firebase
+    let customPrompt = '';
+    try {
+      const pSnap = await get(child(ref(db), 'system/prompt'));
+      if (pSnap.exists()) customPrompt = pSnap.val() || '';
+    } catch {}
+    
+    const prompt = customPrompt || SYSTEM_PROMPT;
+    const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
+    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + content;
+    
+    console.log('[AI] Prompt:', prompt.substring(0, 50));
+    
     if (GOOGLE_API_KEY && WHAPI_TOKEN) {
-      let prompt = 'Eres SONIA de VOLTAJE PLUS. Saludar: "¡Hola! 👋 Soy Sonia.¿En qué te ayudo?". Si pide reembolso "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". REGLAS: 1.NO repeat 2.NO saludar dos veces 3.UNA respuesta por turno';
-      const histSnap = await get(child(ref(db), 'messages/' + chatId));
-      const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
-      const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-      const fullPrompt = prompt + '\n\n' + recent + '\n\nU: ' + content;
-      
-      console.log('[AI] Calling Gemini for:', content);
-      
       const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -73,13 +91,13 @@ export async function POST(req: NextRequest) {
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
           await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
-          console.log('[AI] Replied:', reply.substring(0, 30));
+          console.log('[AI] Reply:', reply.substring(0, 50));
         }
       }
     }
     
     return NextResponse.json({ success: true });
-  } catch (e) { console.error('[ERROR]', e); return NextResponse.json({ error: 'Error' }, { status: 500 }); }
+  } catch (e) { console.error('[ERR]', e); return NextResponse.json({ error: 'Error' }, { status: 500 }); }
 }
 
 export async function GET(req: NextRequest) {
