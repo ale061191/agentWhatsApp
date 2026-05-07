@@ -9,6 +9,27 @@ const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
 const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
 
+/**
+ * Normalizes a phone number for use as a chatId and for WHAPI.
+ * Strips the @s.whatsapp.net suffix and any non-digit characters.
+ * Keeps the FULL international number (with country code).
+ */
+function normalizeChatId(rawPhone: string): string {
+  return rawPhone
+    .replace('@s.whatsapp.net', '')
+    .replace('@c.us', '')
+    .replace(/\D/g, '');
+}
+
+/**
+ * Formats a chatId for sending via WHAPI.
+ * WHAPI requires the format: phone@s.whatsapp.net
+ */
+function toWhatsAppId(chatId: string): string {
+  if (chatId.includes('@')) return chatId;
+  return chatId + '@s.whatsapp.net';
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -18,11 +39,18 @@ export async function POST(req: NextRequest) {
     const msg = msgs[0];
     if (msg.from_me) return NextResponse.json({ success: true });
     
-    const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
+    // Extract phone: prefer chat_id, fallback to from
+    const rawPhone = msg.chat_id || msg.from || '';
+    const chatId = normalizeChatId(rawPhone);
+    
+    if (!chatId) {
+      console.error('[WEBHOOK] Could not extract phone number from message:', JSON.stringify(msg).substring(0, 200));
+      return NextResponse.json({ error: 'No phone number' }, { status: 400 });
+    }
+    
     let content = msg.text?.body || '';
     const msgType = msg.type || 'text';
     
-    const chatId = phone.replace(/\D/g, '').slice(-10);
     const db = getFirebaseDB();
     const msgId = 'm_' + Date.now();
     
@@ -36,11 +64,17 @@ export async function POST(req: NextRequest) {
     let oldChat = chatSnap.val() || {};
     let imgCount = oldChat.imageCount || 0;
     
-if (isImageMsg) {
+    if (isImageMsg) {
       imgCount = imgCount + 1;
       const msgData: Message = { id: msgId, chatId, content: '[Imagen] #' + imgCount, sender: 'user', timestamp: Date.now(), status: 'delivered' };
       await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-      await update(ref(db, 'chats/' + chatId), { lastMessage: '[Imagen]', lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, imageCount: imgCount });
+      await update(ref(db, 'chats/' + chatId), { 
+        phone: chatId,
+        lastMessage: '[Imagen]', 
+        lastMessageTime: Date.now(), 
+        unreadCount: (oldChat.unreadCount || 0) + 1, 
+        imageCount: imgCount 
+      });
       
       console.log('[IMG] Count:', imgCount, '/3');
       
@@ -50,7 +84,7 @@ if (isImageMsg) {
         return NextResponse.json({ success: true });
       }
       
-// Got 3 images! Now reset count and trigger AI to ask for data
+      // Got 3 images! Now reset count and trigger AI to ask for data
       console.log('[IMG] Got 3! Triggering AI to request data...');
       content = '[Sistema: El usuario ha enviado 3 imágenes. Ahora debe pedir los datos personales y bancarios.]';
       // Reset image count AFTER triggering AI
@@ -62,7 +96,13 @@ if (isImageMsg) {
     oldChat = (await get(child(ref(db), 'chats/' + chatId))).val() || {};
     const aiEnabled = oldChat.aiEnabled !== false;
     await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-    await update(ref(db, 'chats/' + chatId), { lastMessage: content, lastMessageTime: Date.now(), unreadCount: (oldChat.unreadCount || 0) + 1, aiEnabled });
+    await update(ref(db, 'chats/' + chatId), { 
+      phone: chatId,
+      lastMessage: content, 
+      lastMessageTime: Date.now(), 
+      unreadCount: (oldChat.unreadCount || 0) + 1, 
+      aiEnabled 
+    });
     
     // AUTO-REGISTER CASE: If user sends bank data (name + cedula + phone + account)
     const hasName = /[A-Z][a-z]+\s[A-Z][a-z]+/.test(content);
@@ -91,7 +131,7 @@ if (isImageMsg) {
         canal: 'WhatsApp',
         agente: 'SONIA',
         datos_usuario: { nombre_completo: nombre, cedula, telefono, numero_cuenta: cuenta, tipo_cuenta: tipo },
-       estado_caso: 'pendiente_validacion',
+        estado_caso: 'pendiente_validacion',
         estado_validacion: 'completado'
       };
       await set(ref(db, 'casos_reembolso/' + chatId), caso);
@@ -113,34 +153,66 @@ if (isImageMsg) {
     const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
     const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + content;
     
-    console.log('[AI] Calling...');
+    console.log('[AI] Calling Gemini for chatId:', chatId);
     
     if (GOOGLE_API_KEY && WHAPI_TOKEN) {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GOOGLE_API_KEY, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
       });
       
-      if (res.ok) {
-        const data = await res.json();
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (reply) {
-          await fetch(WHAPI_BASE_URL + '/messages/text', {
-            method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
-            body: JSON.stringify({ to: chatId, body: reply })
-          });
-          const aiId = 'a_' + Date.now();
-          const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
-          await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
-          console.log('[AI] Reply:', reply.substring(0, 30));
-        }
+      if (!res.ok) {
+        const errBody = await res.text();
+        console.error('[AI] Gemini API error:', res.status, errBody);
+        return NextResponse.json({ success: false, error: 'Gemini API error' });
       }
+      
+      const data = await res.json();
+      const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      
+      if (reply) {
+        // Send reply to WhatsApp via WHAPI - MUST use phone@s.whatsapp.net format
+        const whapiTo = toWhatsAppId(chatId);
+        console.log('[WHAPI] Sending reply to:', whapiTo);
+        
+        const whapiRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
+          method: 'POST',
+          headers: { 
+            'Authorization': 'Bearer ' + WHAPI_TOKEN, 
+            'Content-Type': 'application/json' 
+          },
+          body: JSON.stringify({ 
+            to: whapiTo, 
+            body: reply 
+          })
+        });
+        
+        const whapiData = await whapiRes.json();
+        
+        if (!whapiRes.ok) {
+          console.error('[WHAPI] Error sending message:', whapiRes.status, JSON.stringify(whapiData));
+        } else {
+          console.log('[WHAPI] Message sent successfully:', JSON.stringify(whapiData).substring(0, 100));
+        }
+        
+        // Save AI response to Firebase
+        const aiId = 'a_' + Date.now();
+        const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
+        await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
+        console.log('[AI] Reply saved:', reply.substring(0, 50));
+      } else {
+        console.error('[AI] No reply text from Gemini. Full response:', JSON.stringify(data).substring(0, 300));
+      }
+    } else {
+      console.error('[CONFIG] Missing GOOGLE_API_KEY or WHAPI_TOKEN');
     }
     
     return NextResponse.json({ success: true });
-  } catch (e) { console.error('[ERR]', e); return NextResponse.json({ error: 'Error' }, { status: 500 }); }
+  } catch (e) { 
+    console.error('[ERR] Webhook error:', e); 
+    return NextResponse.json({ error: 'Error' }, { status: 500 }); 
+  }
 }
 
 export async function GET(req: NextRequest) {
