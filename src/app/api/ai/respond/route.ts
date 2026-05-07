@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     console.log('[AI-RESPOND] Calling Gemini for phone:', phone);
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GOOGLE_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -79,9 +79,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Send reply to WhatsApp via WHAPI - CORRECT endpoint and format
-    const whapiTo = toWhatsAppId(phone);
-    console.log('[AI-RESPOND] Sending WHAPI message to:', whapiTo);
+    // Send reply to WhatsApp via WHAPI
+    const cleanPhone = phone.replace(/\D/g, '');
+    console.log('[AI-RESPOND] Sending WHAPI message to:', cleanPhone);
 
     const sendResponse = await fetch(`${WHAPI_BASE_URL}/messages/text`, {
       method: 'POST',
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        to: whapiTo,
+        to: cleanPhone,
         body: aiResponse,
       }),
     });

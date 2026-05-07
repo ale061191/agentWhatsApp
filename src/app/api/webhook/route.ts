@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
     console.log('[AI] Calling Gemini for chatId:', chatId);
     
     if (GOOGLE_API_KEY && WHAPI_TOKEN) {
-      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GOOGLE_API_KEY, {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
@@ -172,9 +172,8 @@ export async function POST(req: NextRequest) {
       const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
       
       if (reply) {
-        // Send reply to WhatsApp via WHAPI - MUST use phone@s.whatsapp.net format
-        const whapiTo = toWhatsAppId(chatId);
-        console.log('[WHAPI] Sending reply to:', whapiTo);
+        // Send reply to WhatsApp via WHAPI - use plain phone number (WHAPI accepts both formats)
+        console.log('[WHAPI] Sending reply to:', chatId);
         
         const whapiRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
           method: 'POST',
@@ -183,7 +182,7 @@ export async function POST(req: NextRequest) {
             'Content-Type': 'application/json' 
           },
           body: JSON.stringify({ 
-            to: whapiTo, 
+            to: chatId, 
             body: reply 
           })
         });
