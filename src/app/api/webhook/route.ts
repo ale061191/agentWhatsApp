@@ -23,32 +23,17 @@ function normalizeChatId(rawPhone: string): string {
 
 /**
  * Detects if a message indicates the user will send info soon.
- * Examples: "ya los envío", "en un momento", "dame un segundo", etc.
  */
 function isUserSayingWillSendSoon(text: string): boolean {
   const lower = text.toLowerCase().trim();
   const patterns = [
-    /ya\s+(los?\s+)?env[ií]/,         // "ya los envío", "ya envío"
-    /en\s+un\s+momento/,              // "en un momento"
-    /dame\s+(un\s+)?(momento|segundo|minuto)/, // "dame un momento"
-    /ahorita/,                         // "ahorita"
-    /un\s+(momento|segundo|minuto)/,   // "un momento"
-    /ya\s+v(oy|a)\s/,                 // "ya voy a enviar"
-    /espera/,                          // "espera"
-    /ya\s+cas[iy]/,                    // "ya casi"
-    /lo\s+env[ií]o/,                   // "lo envío"
-    /los?\s+mand[oa]/,                // "los mando"
-    /voy\s+a\s+enviar/,               // "voy a enviar"
-    /voy\s+a\s+mandar/,               // "voy a mandar"
-    /enseguida/,                       // "enseguida"
-    /ya\s+mismo/,                      // "ya mismo"
-    /dame\s+chance/,                   // "dame chance"
-    /un\s+ratico/,                     // "un ratico"
-    /permiso/,                         // "permiso"
-    /déjame/,                          // "déjame buscar"
-    /dejame/,                          // "dejame buscar"
-    /estoy\s+buscando/,               // "estoy buscando"
-    /busco\s+y/,                       // "busco y te envío"
+    /ya\s+(los?\s+)?env[ií]/, /en\s+un\s+momento/,
+    /dame\s+(un\s+)?(momento|segundo|minuto)/, /ahorita/,
+    /un\s+(momento|segundo|minuto)/, /ya\s+v(oy|a)\s/, /espera/,
+    /ya\s+cas[iy]/, /lo\s+env[ií]o/, /los?\s+mand[oa]/,
+    /voy\s+a\s+enviar/, /voy\s+a\s+mandar/, /enseguida/,
+    /ya\s+mismo/, /dame\s+chance/, /un\s+ratico/,
+    /déjame/, /dejame/, /estoy\s+buscando/, /busco\s+y/,
   ];
   return patterns.some(p => p.test(lower));
 }
@@ -59,13 +44,108 @@ function isUserSayingWillSendSoon(text: string): boolean {
  */
 function looksLikeUserData(text: string): boolean {
   let score = 0;
-  if (/[A-Z][a-záéíóúñ]+\s+[A-Z][a-záéíóúñ]+/.test(text)) score++; // Name pattern
-  if (/\d{5,8}/.test(text)) score++;     // Cedula
-  if (/0\d{10}/.test(text)) score++;     // Phone
-  if (/\d{20}/.test(text)) score++;      // Account number
-  if (/corriente|ahorro/i.test(text)) score++; // Account type
-  if (/cedula|cédula|nombre|cuenta|telefono|teléfono/i.test(text)) score++; // Keywords
+  // Name pattern: two words with first letter uppercase (or all caps)
+  if (/[A-ZÁÉÍÓÚÑa-záéíóúñ]{2,}\s+[A-ZÁÉÍÓÚÑa-záéíóúñ]{2,}/.test(text)) score++;
+  if (/\d{5,10}/.test(text)) score++;      // Cedula or phone digits
+  if (/\d{10,}/.test(text)) score++;       // Phone or account number
+  if (/corriente|ahorro/i.test(text)) score++;  // Account type
+  if (/cedula|cédula|nombre|cuenta|telefono|teléfono|banco/i.test(text)) score++;
+  // If user sends a multi-line message with several lines of data
+  if (text.split('\n').length >= 3) score++;
   return score >= 2;
+}
+
+/**
+ * Uses Gemini AI to extract structured user data from conversation history.
+ * Returns null if data cannot be extracted.
+ */
+async function extractUserDataWithAI(messages: Message[]): Promise<{
+  nombre_completo: string;
+  cedula: string;
+  telefono: string;
+  numero_cuenta: string;
+  tipo_cuenta: string;
+} | null> {
+  if (!GOOGLE_API_KEY) return null;
+  
+  // Get the last 20 messages from the user (text messages only, skip images/system)
+  const userMessages = messages
+    .filter(m => m.sender === 'user' && !m.content.startsWith('[Imagen]') && !m.content.startsWith('[Sistema:'))
+    .slice(-20)
+    .map(m => m.content)
+    .join('\n');
+  
+  const allRecentMessages = messages
+    .slice(-25)
+    .map(m => `${m.sender === 'agent' ? 'AGENTE' : 'USUARIO'}: ${m.content}`)
+    .join('\n');
+
+  const extractionPrompt = `Analiza esta conversación de WhatsApp y extrae los datos personales y bancarios que el usuario proporcionó.
+
+CONVERSACIÓN:
+${allRecentMessages}
+
+INSTRUCCIONES:
+- Extrae SOLO los datos que el usuario haya proporcionado explícitamente
+- Si un dato NO fue proporcionado, deja el campo vacío ""
+- El nombre puede venir en cualquier formato (mayúsculas, minúsculas, etc.)
+- La cédula es un número de identidad venezolano (generalmente 6-10 dígitos, puede tener V- o CI: prefijo)
+- El teléfono puede venir como 04XX-XXXXXXX, +58XXXXXXXXXX, o similar
+- La cuenta bancaria es un número largo (generalmente 20 dígitos)
+- El tipo de cuenta es "Corriente" o "Ahorro"
+
+RESPONDE EXACTAMENTE en este formato JSON, sin texto adicional, sin backticks, sin markdown:
+{"nombre_completo":"","cedula":"","telefono":"","numero_cuenta":"","tipo_cuenta":""}`;
+
+  try {
+    const res = await fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: extractionPrompt }] }],
+          generationConfig: { temperature: 0.1 }  // Low temp for precision
+        })
+      }
+    );
+
+    if (!res.ok) {
+      console.error('[EXTRACT] Gemini error:', res.status);
+      return null;
+    }
+
+    const data = await res.json();
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    
+    if (!responseText) return null;
+    
+    // Clean the response - remove markdown code fences if present
+    const cleanJson = responseText
+      .replace(/```json\s*/g, '')
+      .replace(/```\s*/g, '')
+      .trim();
+    
+    console.log('[EXTRACT] AI extracted data:', cleanJson);
+    const parsed = JSON.parse(cleanJson);
+    
+    // Validate we got at least some data
+    if (!parsed.nombre_completo && !parsed.cedula && !parsed.telefono && !parsed.numero_cuenta) {
+      console.log('[EXTRACT] No useful data extracted');
+      return null;
+    }
+    
+    return {
+      nombre_completo: parsed.nombre_completo || '',
+      cedula: parsed.cedula || '',
+      telefono: parsed.telefono || '',
+      numero_cuenta: parsed.numero_cuenta || '',
+      tipo_cuenta: parsed.tipo_cuenta || 'Corriente'
+    };
+  } catch (err) {
+    console.error('[EXTRACT] Error parsing AI response:', err);
+    return null;
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -145,16 +225,55 @@ export async function POST(req: NextRequest) {
       
       // Check if user is sending their actual data
       if (looksLikeUserData(content)) {
-        console.log('[WAITING] User sent data! Processing normally...');
-        // Clear the waiting flag - let it continue to AI processing below
+        console.log('[WAITING] User sent data! Extracting with AI...');
+        
+        // Get full message history for AI extraction
+        const histSnap = await get(child(ref(db), 'messages/' + chatId));
+        const allMsgs = Object.values(histSnap.val() || {})
+          .sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
+        
+        // Use AI to extract structured data from the conversation
+        const extractedData = await extractUserDataWithAI(allMsgs);
+        
+        if (extractedData && (extractedData.nombre_completo || extractedData.cedula || extractedData.numero_cuenta)) {
+          console.log('[EXTRACT] Successfully extracted user data:', JSON.stringify(extractedData));
+          
+          // Check if case already exists - if so, update it; if not, create it
+          const existingCase = (await get(child(ref(db), 'casos_reembolso/' + chatId))).val();
+          
+          const caso = {
+            caso_id: existingCase?.caso_id || 'CASO-' + Date.now(),
+            fecha_primer_contacto: existingCase?.fecha_primer_contacto || new Date().toISOString(),
+            fecha_registro_caso: new Date().toISOString(),
+            canal: 'WhatsApp',
+            agente: 'SONIA',
+            datos_usuario: {
+              nombre_completo: extractedData.nombre_completo || existingCase?.datos_usuario?.nombre_completo || '',
+              cedula: extractedData.cedula || existingCase?.datos_usuario?.cedula || '',
+              telefono: extractedData.telefono || existingCase?.datos_usuario?.telefono || '',
+              numero_cuenta: extractedData.numero_cuenta || existingCase?.datos_usuario?.numero_cuenta || '',
+              tipo_cuenta: extractedData.tipo_cuenta || existingCase?.datos_usuario?.tipo_cuenta || 'Corriente'
+            },
+            evidencias: existingCase?.evidencias || {
+              captura_historial_operaciones: '[Imagen recibida]',
+              captura_billetera_app: '[Imagen recibida]',
+              captura_movimientos_bancarios: '[Imagen recibida]'
+            },
+            estado_caso: 'pendiente_validacion',
+            estado_validacion: 'completado'
+          };
+          
+          await set(ref(db, 'casos_reembolso/' + chatId), caso);
+          console.log('[AUTO] Caso registrado/actualizado con datos extraídos por AI');
+        }
+        
+        // Clear the waiting flag
         await update(ref(db, 'chats/' + chatId), { waitingForData: false });
-        // Fall through to normal AI processing
+        // Fall through to normal AI processing to confirm the case
       }
       // Check if user says they'll send soon
       else if (isUserSayingWillSendSoon(content)) {
         console.log('[WAITING] User says will send soon, acknowledging briefly...');
-        // Clear waiting flag temporarily to let AI respond, then set it back
-        // Actually, just respond with a brief acknowledgment and keep waiting
         const briefReply = '¡Perfecto! Sin problema, quedo atenta. Envíame la información cuando la tengas lista. 😊';
         
         // Send to WhatsApp
@@ -197,42 +316,6 @@ export async function POST(req: NextRequest) {
     // Re-read chat state for aiEnabled check
     oldChat = (await get(child(ref(db), 'chats/' + chatId))).val() || {};
     const aiEnabled = oldChat.aiEnabled !== false;
-    
-    // AUTO-REGISTER CASE: If user sends bank data (name + cedula + phone + account)
-    const hasName = /[A-Z][a-z]+\s[A-Z][a-z]+/.test(content);
-    const hasCedula = /\d{5,8}/.test(content);
-    const hasPhone = /0\d{10}/.test(content);
-    const hasAccount = /\d{20}/.test(content);
-    const hasCase = (await get(child(ref(db), 'casos_reembolso/' + chatId))).exists();
-    
-    if (!hasCase && hasName && hasCedula && hasPhone && hasAccount) {
-      // Extract data
-      const lines = content.split('\n');
-      let nombre = 'Usuario', cedula = '', telefono = '', cuenta = '', tipo = 'Corriente';
-      for (const line of lines) {
-        const clean = line.replace(/\s/g, '');
-        if (!nombre && /^[A-Z][a-z]+\s[A-Z][a-z]+/.test(line)) nombre = line;
-        if (!telefono && /0\d{10}/.test(clean)) telefono = clean.match(/0\d{10}/)?.[0] || '';
-        if (!cuenta && /\d{20,}/.test(clean)) cuenta = clean.match(/\d{20,}/)?.[0] || '';
-        if (!cedula && /\d{5,8}/.test(clean) && clean.length < 10) cedula = clean.match(/\d{5,8}/)?.[0] || '';
-        if (line.toLowerCase().includes('ahorro')) tipo = 'Ahorro';
-      }
-      
-      const caso = {
-        caso_id: 'CASO-' + Date.now(),
-        fecha_primer_contacto: new Date(Date.now() - 30*60000).toISOString(),
-        fecha_registro_caso: new Date().toISOString(),
-        canal: 'WhatsApp',
-        agente: 'SONIA',
-        datos_usuario: { nombre_completo: nombre, cedula, telefono, numero_cuenta: cuenta, tipo_cuenta: tipo },
-        estado_caso: 'pendiente_validacion',
-        estado_validacion: 'completado'
-      };
-      await set(ref(db, 'casos_reembolso/' + chatId), caso);
-      // Clear the waiting flag since we got the data
-      await update(ref(db, 'chats/' + chatId), { waitingForData: false });
-      console.log('[AUTO] Caso registrado automáticamente');
-    }
     
     if (!aiEnabled) return NextResponse.json({ success: true });
     
