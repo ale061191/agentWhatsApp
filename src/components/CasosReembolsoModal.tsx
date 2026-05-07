@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { X, Search, Download, CreditCard, AlertCircle, Trash2, Calendar, ChevronDown } from 'lucide-react';
+import { X, Search, Download, CreditCard, AlertCircle, Trash2, Calendar, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface CasosReembolsoModalProps { isOpen: boolean; onClose: () => void; }
@@ -25,6 +25,8 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
   const [customDateTo, setCustomDateTo] = useState('');
   const [showDateDropdown, setShowDateDropdown] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
 
   const loadCasos = useCallback(async () => {
     if (!isOpen) return;
@@ -93,6 +95,13 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
     caso.datos_usuario?.nombre_completo?.toLowerCase().includes(filtro.toLowerCase()) ||
     caso.datos_usuario?.cedula?.includes(filtro) || caso.id.includes(filtro) || caso.caso_id?.includes(filtro)
   );
+
+  const totalPages = Math.max(1, Math.ceil(casosFiltrados.length / ITEMS_PER_PAGE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedCasos = casosFiltrados.slice((safeCurrentPage - 1) * ITEMS_PER_PAGE, safeCurrentPage * ITEMS_PER_PAGE);
+
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(1); }, [filtro, dateFilter, customDateFrom, customDateTo]);
 
   const handleDelete = async (casoId: string) => {
     if (deletingId) return;
@@ -181,15 +190,15 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
             <div className="relative flex-1 min-w-[220px]">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
               <input type="text" placeholder="Buscar por nombre, cédula o ID..." value={filtro} onChange={(e) => setFiltro(e.target.value)}
-                className="w-full py-3 bg-[#0a0b0d] text-white text-sm rounded-xl border border-[rgba(255,255,255,0.08)] focus:border-[#25d366]/50 focus:outline-none focus:ring-1 focus:ring-[#25d366]/20 placeholder-gray-600 transition-all"
-                style={{ paddingLeft: '44px', paddingRight: '16px' }}
+                className="w-full bg-[#0a0b0d] text-white text-sm border border-[rgba(255,255,255,0.08)] focus:border-[#25d366]/50 focus:outline-none focus:ring-1 focus:ring-[#25d366]/20 placeholder-gray-600 transition-all"
+                style={{ paddingLeft: '44px', paddingRight: '16px', height: '44px', borderRadius: '8px' }}
               />
             </div>
             {/* Date Filter */}
             <div className="relative">
               <button onClick={() => setShowDateDropdown(!showDateDropdown)}
-                className="flex items-center gap-2.5 bg-[#0a0b0d] border border-[rgba(255,255,255,0.08)] rounded-xl text-sm text-gray-300 hover:border-[#25d366]/30 transition-colors"
-                style={{ padding: '12px 18px' }}>
+                className="flex items-center gap-2.5 bg-[#0a0b0d] border border-[rgba(255,255,255,0.08)] text-sm text-gray-300 hover:border-[#25d366]/30 transition-colors"
+                style={{ padding: '0 18px', height: '44px', borderRadius: '8px' }}>
                 <Calendar className="w-4 h-4 text-[#25d366]" />
                 <span>{dateFilterLabels[dateFilter]}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
@@ -220,8 +229,8 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
             </div>
             {/* Export */}
             <button onClick={handleExportExcel} disabled={casosFiltrados.length === 0}
-              className="flex items-center gap-2.5 bg-[#25d366]/10 hover:bg-[#25d366]/20 border border-[#25d366]/25 rounded-xl text-sm text-[#25d366] transition-all disabled:opacity-30 disabled:cursor-not-allowed font-medium"
-              style={{ padding: '12px 20px' }}>
+              className="flex items-center gap-2.5 bg-[#25d366]/10 hover:bg-[#25d366]/20 border border-[#25d366]/25 text-sm text-[#25d366] transition-all disabled:opacity-30 disabled:cursor-not-allowed font-medium"
+              style={{ padding: '0 20px', height: '44px', borderRadius: '8px' }}>
               <Download className="w-4 h-4" />
               <span>Exportar Excel</span>
             </button>
@@ -262,7 +271,7 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
                 </tr>
               </thead>
               <tbody>
-                {casosFiltrados.map(caso => (
+                {paginatedCasos.map(caso => (
                   <tr key={caso.id} className="hover:bg-[rgba(37,211,102,0.04)] transition-colors group rounded-xl"
                     style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                     <td style={{ padding: '16px' }}>
@@ -338,11 +347,35 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
           )}
         </div>
 
+        {/* ── Pagination ── */}
+        {!loading && casosFiltrados.length > 0 && totalPages > 1 && (
+          <div className="border-t border-[rgba(255,255,255,0.05)] shrink-0 flex items-center justify-center gap-2" style={{ padding: '14px 28px' }}>
+            <button onClick={() => setCurrentPage(p => Math.max(1, p - 1))} disabled={safeCurrentPage === 1}
+              className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+              <button key={page} onClick={() => setCurrentPage(page)}
+                className={`min-w-[36px] h-[36px] rounded-lg text-sm font-medium transition-all ${
+                  page === safeCurrentPage
+                    ? 'bg-[#25d366] text-black'
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                }`}>
+                {page}
+              </button>
+            ))}
+            <button onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} disabled={safeCurrentPage === totalPages}
+              className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
         {/* ── Footer ── */}
         {!loading && casosFiltrados.length > 0 && (
           <div className="border-t border-[rgba(255,255,255,0.05)] shrink-0 flex items-center justify-between text-xs text-gray-500"
             style={{ padding: '14px 28px' }}>
-            <span>Mostrando {casosFiltrados.length} de {casos.length} casos</span>
+            <span>Mostrando {((safeCurrentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(safeCurrentPage * ITEMS_PER_PAGE, casosFiltrados.length)} de {casosFiltrados.length} casos</span>
             <div className="flex items-center gap-5">
               <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-green-500" /> Historial</span>
               <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Billetera</span>
