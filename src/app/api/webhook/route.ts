@@ -14,7 +14,7 @@ const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 async function getContactName(phone: string): Promise<string | null> {
   if (!WHAPI_TOKEN) return null;
   try {
-    const res = await fetch(`${WHAPI_BASE_URL}/contacts/${phone}@s.whatsapp.net`, {
+    const res = await fetch(`${WHAPI_BASE_URL}/contacts/${phone}`, {
       headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Accept': 'application/json' }
     });
     if (res.ok) {
