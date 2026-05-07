@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Message } from '@/types';
 import { getFirebaseDB } from '@/lib/firebase';
-import { ref, set, get, child, update } from 'firebase/database';
+import { ref, set, get, child, update, runTransaction } from 'firebase/database';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
@@ -243,29 +243,52 @@ export async function POST(req: NextRequest) {
     }
     
     if (isImageMsg) {
-      imgCount = imgCount + 1;
-      const msgData: Message = { id: msgId, chatId, content: '[Imagen] #' + imgCount, sender: 'user', timestamp: Date.now(), status: 'delivered' };
+      const chatRef = ref(db, 'chats/' + chatId);
+      let wasExactlyThree = false;
+      let newCount = 1;
+      
+      try {
+        const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount) => {
+          const count = (currentCount || 0) + 1;
+          if (count === 3) {
+            wasExactlyThree = true;
+            return 0; // Reset after reaching 3 to prevent further triggers
+          }
+          return count;
+        });
+        
+        if (txResult.committed) {
+          newCount = wasExactlyThree ? 3 : txResult.snapshot.val();
+        }
+      } catch (err) {
+        console.error('[IMG] Transaction failed:', err);
+        // Fallback
+        newCount = imgCount + 1;
+        if (newCount === 3) wasExactlyThree = true;
+      }
+
+      const msgData: Message = { id: msgId, chatId, content: '[Imagen] #' + newCount, sender: 'user', timestamp: Date.now(), status: 'delivered' };
       await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-      await update(ref(db, 'chats/' + chatId), { 
+      await update(chatRef, { 
         phone: chatId,
         lastMessage: '[Imagen]', 
         lastMessageTime: Date.now(), 
         unreadCount: (oldChat.unreadCount || 0) + 1, 
-        imageCount: imgCount 
+        // imageCount is handled by transaction
       });
       
-      console.log('[IMG] Count:', imgCount, '/3');
+      console.log('[IMG] Count:', newCount, '/3 (was exactly three:', wasExactlyThree, ')');
       
-      // If less than 3 images, save silently and don't call AI
-      if (imgCount < 3) {
-        console.log('[IMG] Waiting for more images...');
+      // If we haven't hit exactly 3 images, save silently and don't reply
+      if (!wasExactlyThree) {
+        console.log('[IMG] Waiting for more images or skipped extra images...');
         return NextResponse.json({ success: true });
       }
       
-      // Got 3 images! Send fixed reply directly - NO AI call needed
+      // Got exactly 3 images! Send fixed reply directly - NO AI call needed
       console.log('[IMG] Got 3! Sending fixed thank-you and requesting data...');
       
-      const thankYouMsg = '¡Perfecto, ya recibimos tus 3 capturas! ✅📱📱👛🏦\n\nAhora solo necesitamos tus datos para completar el caso:\n\n• *Nombre completo*\n• *Cédula de identidad*\n• *Número de teléfono*\n• *Número de cuenta bancaria*\n• *Tipo de cuenta* (Corriente o Ahorro)\n\nEnvíalos cuando puedas, aquí estaré. 😊';
+      const thankYouMsg = '¡Perfecto, ya recibimos tus 3 capturas! ✅📱👛🏦\n\nAhora solo necesitamos tus datos para completar el caso:\n\n• *Nombre completo*\n• *Cédula de identidad*\n• *Número de teléfono*\n• *Número de cuenta bancaria*\n• *Tipo de cuenta* (Corriente o Ahorro)\n\nEnvíalos cuando puedas, aquí estaré. 😊';
       
       // Send to WhatsApp
       if (WHAPI_TOKEN) {
@@ -281,8 +304,8 @@ export async function POST(req: NextRequest) {
       const aiMsg: Message = { id: aiId, chatId, content: thankYouMsg, sender: 'agent', timestamp: Date.now(), status: 'sent' };
       await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
       
-      // Reset image count and set waitingForData flag
-      await update(ref(db, 'chats/' + chatId), { imageCount: 0, waitingForData: true, lastMessage: thankYouMsg.substring(0, 50), lastMessageTime: Date.now() });
+      // Set waitingForData flag (imageCount is already 0 from transaction)
+      await update(chatRef, { waitingForData: true, lastMessage: thankYouMsg.substring(0, 50), lastMessageTime: Date.now() });
       
       return NextResponse.json({ success: true });
     }
