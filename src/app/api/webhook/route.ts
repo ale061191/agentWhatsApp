@@ -285,29 +285,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true });
       }
       
-      // Got exactly 3 images! Send fixed reply directly - NO AI call needed
-      console.log('[IMG] Got 3! Sending fixed thank-you and requesting data...');
+      // Got exactly 3 images! Let AI generate the response
+      console.log('[IMG] Got 3! Triggering AI to request data...');
+      content = '[Sistema: El usuario haendido 3 imgenes. Ahora debe pedir los datos personales y bancarios.]';
       
-      const thankYouMsg = '¡Perfecto, ya recibimos tus 3 capturas! ✅📱👛🏦\n\nAhora solo necesitamos tus datos para completar el caso:\n\n• *Nombre completo*\n• *Cédula de identidad*\n• *Número de teléfono*\n• *Número de cuenta bancaria*\n• *Tipo de cuenta* (Corriente o Ahorro)\n\nEnvíalos cuando puedas, aquí estaré. 😊';
+      // Set waitingForData flag
+      await update(chatRef, { waitingForData: true, lastMessage: '[Imagen 3/3]', lastMessageTime: Date.now() });
       
-      // Send to WhatsApp
-      if (WHAPI_TOKEN) {
-        await fetch(WHAPI_BASE_URL + '/messages/text', {
-          method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: chatId, body: thankYouMsg })
-        });
-      }
-      
-      // Save to Firebase
-      const aiId = 'a_' + Date.now();
-      const aiMsg: Message = { id: aiId, chatId, content: thankYouMsg, sender: 'agent', timestamp: Date.now(), status: 'sent' };
-      await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
-      
-      // Set waitingForData flag (imageCount is already 0 from transaction)
-      await update(chatRef, { waitingForData: true, lastMessage: thankYouMsg.substring(0, 50), lastMessageTime: Date.now() });
-      
-      return NextResponse.json({ success: true });
+      // Continue to normal flow - AI will generate response
     }
     
     // If we're waiting for data and this is NOT the 3-images trigger...
