@@ -20,6 +20,8 @@ export async function POST(req: NextRequest) {
     const msg = msgs[0];
     if (msg.from_me) return NextResponse.json({ success: true });
     
+    console.log('MSG:', msg.type, msg.text?.body);
+    
     const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
     let content = msg.text?.body || '';
     const msgType = msg.type || 'text';
