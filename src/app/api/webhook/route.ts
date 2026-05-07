@@ -7,6 +7,26 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
+/**
+ * Fetches the contact's pushname (display name) from WHAPI.
+ * Returns null if not found.
+ */
+async function getContactName(phone: string): Promise<string | null> {
+  if (!WHAPI_TOKEN) return null;
+  try {
+    const res = await fetch(`${WHAPI_BASE_URL}/contacts/${phone}@s.whatsapp.net`, {
+      headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Accept': 'application/json' }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return data.pushname || data.name || null;
+    }
+  } catch (err) {
+    console.log('[CONTACT] Could not fetch contact name:', err);
+  }
+  return null;
+}
+
 const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
 
 /**
@@ -182,6 +202,16 @@ export async function POST(req: NextRequest) {
     let oldChat = chatSnap.val() || {};
     let imgCount = oldChat.imageCount || 0;
     const isWaitingForData = oldChat.waitingForData === true;
+    
+    // Fetch and save contact name if we don't have one yet
+    if (!oldChat.name) {
+      const contactName = await getContactName(chatId);
+      if (contactName) {
+        await update(ref(db, 'chats/' + chatId), { name: contactName });
+        oldChat.name = contactName;
+        console.log('[CONTACT] Saved name:', contactName, 'for', chatId);
+      }
+    }
     
     if (isImageMsg) {
       imgCount = imgCount + 1;
