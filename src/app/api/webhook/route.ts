@@ -40,10 +40,8 @@ REGLAS ESTRICTAS:
 8. Respuestas cortas y amigables
 
 FLUJO DE REEMBOLSO:
-- Si el usuario pide reembolso: Pedir las 3 capturas + datos personales/bancarios
-- Si recibes "[Sistema: El usuario ha enviado 3 imágenes...]": Agradecer por las 3 capturas recibidas ✅ y pedir SOLO los datos que faltan (nombre, cédula, teléfono, cuenta bancaria, tipo de cuenta). NO volver a pedir imágenes.
-- Si el usuario envía sus datos bancarios: Confirmar "¡Perfecto! ✅ Tu caso de reembolso ha sido registrado exitosamente. Nuestro equipo lo revisará y te contactaremos pronto. ¡Gracias por tu paciencia!"
-- NUNCA repitas la solicitud de imágenes si el sistema ya confirmó que las recibió.`;
+- Si el usuario pide reembolso: Pedir las 3 capturas + datos personales/bancarios.
+- Si el usuario envía sus datos bancarios y personales: Confirmar "¡Perfecto! ✅ Tu caso de reembolso ha sido registrado exitosamente. Nuestro equipo lo revisará y te contactaremos pronto. ¡Gracias por tu paciencia!"`;
 
 /**
  * Normalizes a phone number for use as a chatId and for WHAPI.
@@ -264,15 +262,33 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true });
       }
       
-      // Got 3 images! Now reset count and trigger AI to ask for data
-      console.log('[IMG] Got 3! Triggering AI to request data...');
-      content = '[Sistema: El usuario ha enviado 3 imágenes. Ahora debe pedir los datos personales y bancarios.]';
+      // Got 3 images! Send fixed reply directly - NO AI call needed
+      console.log('[IMG] Got 3! Sending fixed thank-you and requesting data...');
+      
+      const thankYouMsg = '¡Perfecto, ya recibimos tus 3 capturas! ✅📱📱👛🏦\n\nAhora solo necesitamos tus datos para completar el caso:\n\n• *Nombre completo*\n• *Cédula de identidad*\n• *Número de teléfono*\n• *Número de cuenta bancaria*\n• *Tipo de cuenta* (Corriente o Ahorro)\n\nEnvíalos cuando puedas, aquí estaré. 😊';
+      
+      // Send to WhatsApp
+      if (WHAPI_TOKEN) {
+        await fetch(WHAPI_BASE_URL + '/messages/text', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: chatId, body: thankYouMsg })
+        });
+      }
+      
+      // Save to Firebase
+      const aiId = 'a_' + Date.now();
+      const aiMsg: Message = { id: aiId, chatId, content: thankYouMsg, sender: 'agent', timestamp: Date.now(), status: 'sent' };
+      await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
+      
       // Reset image count and set waitingForData flag
-      await update(ref(db, 'chats/' + chatId), { imageCount: 0, waitingForData: true });
+      await update(ref(db, 'chats/' + chatId), { imageCount: 0, waitingForData: true, lastMessage: thankYouMsg.substring(0, 50), lastMessageTime: Date.now() });
+      
+      return NextResponse.json({ success: true });
     }
     
     // If we're waiting for data and this is NOT the 3-images trigger...
-    if (isWaitingForData && !content.startsWith('[Sistema:')) {
+    if (isWaitingForData) {
       
       // Save the message to Firebase regardless
       const msgData: Message = { id: msgId, chatId, content, sender: 'user', timestamp: Date.now(), status: 'delivered' };
