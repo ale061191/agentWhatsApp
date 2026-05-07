@@ -7,11 +7,9 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-const SYSTEM_PROMPT = `VERSION 3. Eres SONIA de VOLTAJE PLUS. Responde solo con texto simple.`;
+const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
 
 export async function POST(req: NextRequest) {
-  const ts = Date.now();
-  console.log('START', ts);
   try {
     const body = await req.json();
     const msgs = body.messages || [];
@@ -19,8 +17,6 @@ export async function POST(req: NextRequest) {
     
     const msg = msgs[0];
     if (msg.from_me) return NextResponse.json({ success: true });
-    
-    console.log('MSG:', msg.type, msg.text?.body);
     
     const phone = msg.chat_id?.replace('@s.whatsapp.net', '') || msg.from || '';
     let content = msg.text?.body || '';
@@ -31,7 +27,10 @@ export async function POST(req: NextRequest) {
     const msgId = 'm_' + Date.now();
     
     // DETECT IMAGE
-    const isImageMsg = msgType === 'image' || content === '[Imagen]';
+    const isImageMsg = msgType === 'image' || 
+      content === '[Imagen]' || 
+      content.includes('Imagen received') ||
+      content.includes('album');
     
     const chatSnap = await get(child(ref(db), 'chats/' + chatId));
     let oldChat = chatSnap.val() || {};
@@ -127,13 +126,11 @@ if (isImageMsg) {
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
         if (reply) {
-          console.log('WA send to:', chatId, '| msg:', reply.substring(0,20));
-          const waRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
+          await fetch(WHAPI_BASE_URL + '/messages/text', {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN, 'Content-Type': 'application/json' },
             body: JSON.stringify({ to: chatId, body: reply })
           });
-          console.log('WA status:', waRes.status);
           const aiId = 'a_' + Date.now();
           const aiMsg: Message = { id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent' };
           await set(ref(db, 'messages/' + chatId + '/' + aiId), aiMsg);
