@@ -27,7 +27,23 @@ async function getContactName(phone: string): Promise<string | null> {
   return null;
 }
 
-const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS. REGLAS: 1.Saludar SOLO una vez al inicio 2.NO saludar nunca más 3.NO preguntar si necesita algo más 4.NO usar "Entendido" 5.NO notas internas 6.UNA respuesta por turno 7.Nunca decir que no puedes ver imágenes 8.Si el usuarioda los datos: "¡Perfecto! ✅ Caso registrado. Te contactaremos". FLUJO: Si pide reembolsos: "Lamentamos🙏. Necesitamos: 1)📱Captura app 2)👛Captura billetera 3)🏦Captura banco + Tus datos". Si envía imágenes: callar hasta tener 3. Si tiene todo: confirmar caso.`;
+const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS.
+
+REGLAS ESTRICTAS:
+1. Saludar SOLO una vez al inicio de la conversación
+2. NO saludar nunca más después del primer mensaje
+3. NO preguntar "¿necesitas algo más?" ni similar
+4. NO usar "Entendido"
+5. NO hacer notas internas
+6. UNA sola respuesta por turno
+7. Nunca decir que no puedes ver imágenes
+8. Respuestas cortas y amigables
+
+FLUJO DE REEMBOLSO:
+- Si el usuario pide reembolso: Pedir las 3 capturas + datos personales/bancarios
+- Si recibes "[Sistema: El usuario ha enviado 3 imágenes...]": Agradecer por las 3 capturas recibidas ✅ y pedir SOLO los datos que faltan (nombre, cédula, teléfono, cuenta bancaria, tipo de cuenta). NO volver a pedir imágenes.
+- Si el usuario envía sus datos bancarios: Confirmar "¡Perfecto! ✅ Tu caso de reembolso ha sido registrado exitosamente. Nuestro equipo lo revisará y te contactaremos pronto. ¡Gracias por tu paciencia!"
+- NUNCA repitas la solicitud de imágenes si el sistema ya confirmó que las recibió.`;
 
 /**
  * Normalizes a phone number for use as a chatId and for WHAPI.
@@ -192,24 +208,39 @@ export async function POST(req: NextRequest) {
     const db = getFirebaseDB();
     const msgId = 'm_' + Date.now();
     
-    // DETECT IMAGE
+    // Log full message type for debugging
+    console.log('[WEBHOOK] msgType:', msgType, '| hasImage:', !!msg.image, '| hasMedia:', !!(msg.image || msg.video || msg.document), '| content:', content?.substring(0, 50));
+    
+    // DETECT IMAGE - comprehensive check for all WHAPI formats
     const isImageMsg = msgType === 'image' || 
+      msgType === 'sticker' ||
+      !!msg.image ||                         // WHAPI sends image object
       content === '[Imagen]' || 
       content.includes('Imagen received') ||
-      content.includes('album');
+      content.includes('album') ||
+      (msgType !== 'text' && !content && !msg.text);  // Non-text with no body = media
     
     const chatSnap = await get(child(ref(db), 'chats/' + chatId));
     let oldChat = chatSnap.val() || {};
     let imgCount = oldChat.imageCount || 0;
     const isWaitingForData = oldChat.waitingForData === true;
     
-    // Fetch and save contact name if we don't have one yet
+    // Fetch and save contact name - try from message first, then WHAPI API
     if (!oldChat.name) {
-      const contactName = await getContactName(chatId);
-      if (contactName) {
-        await update(ref(db, 'chats/' + chatId), { name: contactName });
-        oldChat.name = contactName;
-        console.log('[CONTACT] Saved name:', contactName, 'for', chatId);
+      // WHAPI often includes the sender's pushname in the message itself
+      const pushName = msg.from_name || msg.sender?.pushname || msg.sender?.name || msg.pushname || msg.notify;
+      if (pushName) {
+        await update(ref(db, 'chats/' + chatId), { name: pushName });
+        oldChat.name = pushName;
+        console.log('[CONTACT] Name from msg:', pushName, 'for', chatId);
+      } else {
+        // Fallback to WHAPI contacts API
+        const contactName = await getContactName(chatId);
+        if (contactName) {
+          await update(ref(db, 'chats/' + chatId), { name: contactName });
+          oldChat.name = contactName;
+          console.log('[CONTACT] Name from API:', contactName, 'for', chatId);
+        }
       }
     }
     
