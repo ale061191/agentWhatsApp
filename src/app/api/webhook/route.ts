@@ -204,7 +204,14 @@ export async function POST(req: NextRequest) {
     const msgType = msg.type || 'text';
     
     const db = getFirebaseDB();
-    const msgId = 'm_' + Date.now();
+    const msgId = msg.id || 'm_' + Date.now();
+    
+    // Check for idempotency: if we already processed this exact message from WHAPI, ignore it.
+    const msgSnap = await get(child(ref(db), 'messages/' + chatId + '/' + msgId));
+    if (msgSnap.exists()) {
+      console.log('[WEBHOOK] Duplicate message ignored:', msgId);
+      return NextResponse.json({ success: true });
+    }
     
     // Log full message type for debugging
     console.log('[WEBHOOK] msgType:', msgType, '| hasImage:', !!msg.image, '| hasMedia:', !!(msg.image || msg.video || msg.document), '| content:', content?.substring(0, 50));
