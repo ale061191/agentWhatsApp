@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@radix-ui/react-switch": "^1.2.6",
+    "@vercel/functions": "^3.6.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "firebase": "^12.12.1",
