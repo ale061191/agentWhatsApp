@@ -402,6 +402,18 @@ export async function POST(req: NextRequest) {
             }
             
             await update(ref(db, 'chats/' + chatId), { waitingForData: false });
+            
+            // Send confirmation message
+            const confirmMsg = '¡Perfecto! ✅ Tu caso de reembolso ha sido registrado exitosamente. Nuestro equipo lo revisará y te contactaremos pronto. ¡Gracias por tu paciencia!';
+            await fetch(WHAPI_BASE_URL + '/messages/text', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN!, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ to: toWhatsAppId(chatId), body: confirmMsg })
+            });
+            const confId = 'a_' + Date.now();
+            const confMsg: Message = { id: confId, chatId, content: confirmMsg, sender: 'agent', timestamp: Date.now(), status: 'sent' };
+            await set(ref(db, 'messages/' + chatId + '/' + confId), confMsg);
+            console.log('[AUTO] Confirmation message sent');
           } catch (e) {
             console.error('[BACKGROUND] Error in data extraction:', e);
           }
