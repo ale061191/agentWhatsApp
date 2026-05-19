@@ -62,6 +62,10 @@ function toWhatsAppId(phone: string): string {
   return clean + '@s.whatsapp.net';
 }
 
+function sanitizeKey(key: string): string {
+  return key.replace(/[.#$\[\]]/g, '_');
+}
+
 function simpleHash(str: string): string {
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
@@ -221,7 +225,7 @@ export async function POST(req: NextRequest) {
     const msgType = msg.type || 'text';
     
     const db = getFirebaseDB();
-    const msgId = msg.id || 'm_' + Date.now();
+    const msgId = (msg.id ? sanitizeKey(msg.id) : 'm_' + Date.now());
     
     // Content-based dedup for text messages (WHAPI sometimes retries with different msg.id)
     if (content) {
@@ -249,7 +253,8 @@ export async function POST(req: NextRequest) {
     
     // Also check msg.id from WHAPI (for image dedup, since images have no text content)
     if (!content && msg.id) {
-      const msgSnap = await get(child(ref(db), 'messages/' + chatId + '/' + msg.id));
+      const imgDedupKey = sanitizeKey(msg.id);
+      const msgSnap = await get(child(ref(db), 'messages/' + chatId + '/' + imgDedupKey));
       if (msgSnap.exists()) {
         console.log('[WEBHOOK] Duplicate message ignored:', msg.id);
         return NextResponse.json({ success: true });
