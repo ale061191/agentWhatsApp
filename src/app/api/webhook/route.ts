@@ -249,13 +249,19 @@ async function sendAIReply(db: any, chatId: string, content: string, msgType: st
 }
 
 export async function POST(req: NextRequest) {
+  console.log('[WEBHOOK] Request received');
   try {
     const body = await req.json();
     const msgs = body.messages || [];
+    console.log('[WEBHOOK] Messages count:', msgs.length);
     if (!msgs.length) return NextResponse.json({ error: 'No messages' }, { status: 400 });
     
     const msg = msgs[0];
-    if (msg.from_me) return NextResponse.json({ success: true });
+    console.log('[WEBHOOK] from_me:', msg.from_me, 'type:', msg.type);
+    if (msg.from_me) {
+      console.log('[WEBHOOK] Skipping own message');
+      return NextResponse.json({ success: true });
+    }
     
     const rawPhone = msg.chat_id || msg.from || '';
     const chatId = normalizeChatId(rawPhone);
