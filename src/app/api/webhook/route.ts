@@ -55,6 +55,22 @@ function normalizeChatId(rawPhone: string): string {
     .replace(/\D/g, '');
 }
 
+function toWhatsAppId(phone: string): string {
+  if (phone.includes('@')) return phone;
+  const clean = phone.replace(/\D/g, '');
+  return clean + '@s.whatsapp.net';
+}
+
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 /**
  * Detects if a message indicates the user will send info soon.
  */
@@ -206,11 +222,37 @@ export async function POST(req: NextRequest) {
     const db = getFirebaseDB();
     const msgId = msg.id || 'm_' + Date.now();
     
-    // Check for idempotency: if we already processed this exact message from WHAPI, ignore it.
-    const msgSnap = await get(child(ref(db), 'messages/' + chatId + '/' + msgId));
-    if (msgSnap.exists()) {
-      console.log('[WEBHOOK] Duplicate message ignored:', msgId);
-      return NextResponse.json({ success: true });
+    // Content-based dedup for text messages (WHAPI sometimes retries with different msg.id)
+    if (content) {
+      const dedupKey = chatId + '/' + simpleHash(content);
+      const dedupRef = ref(db, 'system/dedup/' + dedupKey);
+      try {
+        const dedupResult = await runTransaction(dedupRef, (current) => {
+          const now = Date.now();
+          if (current && typeof current === 'number' && (now - current) < 20000) {
+            return current;
+          }
+          return now;
+        });
+        if (dedupResult.committed) {
+          const val = dedupResult.snapshot.val();
+          if (typeof val === 'number' && val !== Date.now()) {
+            console.log('[DEDUP] Same text content ignored:', content.substring(0, 50));
+            return NextResponse.json({ success: true });
+          }
+        }
+      } catch (e) {
+        console.log('[DEDUP] Error, proceeding:', e);
+      }
+    }
+    
+    // Also check msg.id from WHAPI (for image dedup, since images have no text content)
+    if (!content && msg.id) {
+      const msgSnap = await get(child(ref(db), 'messages/' + chatId + '/' + msg.id));
+      if (msgSnap.exists()) {
+        console.log('[WEBHOOK] Duplicate message ignored:', msg.id);
+        return NextResponse.json({ success: true });
+      }
     }
     
     // Log full message type for debugging
@@ -294,7 +336,7 @@ export async function POST(req: NextRequest) {
       
       // Got exactly 3 images! Let AI generate the response
       console.log('[IMG] Got 3! Triggering AI to request data...');
-      content = '[Sistema: El usuario haendido 3 imgenes. Ahora debe pedir los datos personales y bancarios.]';
+      content = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
       
       // Set waitingForData flag
       await update(chatRef, { waitingForData: true, lastMessage: '[Imagen 3/3]', lastMessageTime: Date.now() });
@@ -372,7 +414,7 @@ export async function POST(req: NextRequest) {
         await fetch(WHAPI_BASE_URL + '/messages/text', {
           method: 'POST',
           headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN!, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ to: chatId, body: briefReply })
+          body: JSON.stringify({ to: toWhatsAppId(chatId), body: briefReply })
         });
         
         // Save to Firebase
@@ -453,7 +495,7 @@ export async function POST(req: NextRequest) {
             'Content-Type': 'application/json' 
           },
           body: JSON.stringify({ 
-            to: chatId, 
+            to: toWhatsAppId(chatId), 
             body: reply 
           })
         });

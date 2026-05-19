@@ -4,10 +4,6 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
-/**
- * Formats a phone number for WHAPI delivery.
- * WHAPI requires: phone@s.whatsapp.net
- */
 function toWhatsAppId(phone: string): string {
   if (phone.includes('@')) return phone;
   const clean = phone.replace(/\D/g, '');
@@ -80,8 +76,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send reply to WhatsApp via WHAPI
-    const cleanPhone = phone.replace(/\D/g, '');
-    console.log('[AI-RESPOND] Sending WHAPI message to:', cleanPhone);
+    console.log('[AI-RESPOND] Sending WHAPI message to:', phone);
 
     const sendResponse = await fetch(`${WHAPI_BASE_URL}/messages/text`, {
       method: 'POST',
@@ -90,7 +85,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        to: cleanPhone,
+        to: toWhatsAppId(phone),
         body: aiResponse,
       }),
     });
