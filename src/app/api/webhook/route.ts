@@ -86,26 +86,11 @@ export async function POST(req: NextRequest) {
     const db = getFirebaseDB();
     const msgId = (msg.id ? sanitizeKey(msg.id) : 'm_' + Date.now());
     
-    // Dedup check
-    if (content) {
-      const dedupKey = chatId + '/' + simpleHash(content);
-      const dedupRef = ref(db, 'system/dedup/' + dedupKey);
-      try {
-        const dedupResult = await runTransaction(dedupRef, (current) => {
-          const now = Date.now();
-          if (current && typeof current === 'number' && (now - current) < 20000) return current;
-          return now;
-        });
-        if (dedupResult.committed) {
-          const val = dedupResult.snapshot.val();
-          if (typeof val === 'number' && val !== Date.now()) {
-            console.log('[WEBHOOK] DEDUP: Same content ignored');
-            return NextResponse.json({ success: true });
-          }
-        }
-      } catch (e) {
-        console.log('[WEBHOOK] DEDUP error, proceeding:', e);
-      }
+    // Check if we already processed this exact WHAPI message
+    const existingSnap = await get(child(ref(db), 'messages/' + chatId + '/' + msgId));
+    if (existingSnap.exists()) {
+      console.log('[WEBHOOK] Duplicate msg.id ignored:', msg.id);
+      return NextResponse.json({ success: true });
     }
     
     // Save message to Firebase
