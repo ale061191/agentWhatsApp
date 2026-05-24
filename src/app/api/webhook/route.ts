@@ -132,6 +132,7 @@ export async function POST(req: NextRequest) {
     let shouldCallAI = true;
     let customMsgForAI = msg.text?.body || '';
 
+    // Check if the current payload has images
     if (msgs.some((m: any) => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]')) {
       const chatRef = ref(db, 'chats/' + chatId);
       let imgCount = oldChat.imageCount || 0;
@@ -140,7 +141,8 @@ export async function POST(req: NextRequest) {
       try {
         const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount) => {
           const count = (currentCount || 0) + msgs.filter((m: any) => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]').length;
-          if (count >= 3) return 0; // reset
+          // If we reach 3 or more, reset it
+          if (count >= 3) return 0;
           return count;
         });
 
@@ -153,16 +155,29 @@ export async function POST(req: NextRequest) {
 
       console.log('[IMG] Current count:', newCount, '/ 3');
 
+      // Si llegó a 0 significa que acaba de completarse el ciclo de 3 imágenes
       if (newCount === 0) {
         console.log('[IMG] Got 3+ images! Triggering AI to request data...');
         customMsgForAI = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
       } else {
+        // Si no es 0, significa que va por la imagen 1 o 2, por ende se queda callado
         console.log('[IMG] Waiting for more images, staying silent.');
         shouldCallAI = false;
       }
     }
 
     if (!shouldCallAI) {
+      return NextResponse.json({ success: true });
+    }
+
+    // Lock to prevent concurrent Gemini calls for the same chat when messages arrive exactly at the same millisecond
+    const lockRef = ref(db, 'locks/' + chatId);
+    const lockResult = await runTransaction(lockRef, (currentLock) => {
+      if (currentLock && (Date.now() - currentLock) < 15000) return; // 15 seconds lock
+      return Date.now();
+    });
+    if (!lockResult.committed) {
+      console.log('[WEBHOOK] AI locked by concurrent request — skipping');
       return NextResponse.json({ success: true });
     }
 
