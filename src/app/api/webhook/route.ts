@@ -132,14 +132,14 @@ export async function POST(req: NextRequest) {
     let shouldCallAI = true;
     let customMsgForAI = msg.text?.body || '';
 
-    if (msgs.some(m => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]')) {
+    if (msgs.some((m: any) => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]')) {
       const chatRef = ref(db, 'chats/' + chatId);
       let imgCount = oldChat.imageCount || 0;
       let newCount = imgCount;
 
       try {
         const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount) => {
-          const count = (currentCount || 0) + msgs.filter(m => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]').length;
+          const count = (currentCount || 0) + msgs.filter((m: any) => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]').length;
           if (count >= 3) return 0; // reset
           return count;
         });
