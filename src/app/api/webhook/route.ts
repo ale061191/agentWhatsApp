@@ -20,15 +20,6 @@ function sanitizeKey(key: string): string {
   return key.replace(/[.#$\[\]]/g, '_');
 }
 
-function simpleHash(str: string): string {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36);
-}
-
 const SYSTEM_PROMPT = `Eres SONIA de VOLTAJE PLUS.
 
 REGLAS ESTRICTAS:
@@ -47,133 +38,154 @@ FLUJO DE REEMBOLSO:
 
 export async function POST(req: NextRequest) {
   console.log('[WEBHOOK] === REQUEST START ===');
-  console.log('[WEBHOOK] GOOGLE_API_KEY:', GOOGLE_API_KEY ? 'SET' : 'MISSING');
-  console.log('[WEBHOOK] WHAPI_TOKEN:', WHAPI_TOKEN ? 'SET' : 'MISSING');
   
   try {
     const body = await req.json();
     const msgs = body.messages || [];
     console.log('[WEBHOOK] Messages count:', msgs.length);
-    console.log('[WEBHOOK] First message:', JSON.stringify(msgs[0]).substring(0, 300));
-    
+
     if (!msgs.length) {
-      console.log('[WEBHOOK] No messages, returning 400');
       return NextResponse.json({ error: 'No messages' }, { status: 400 });
     }
-    
+
     const msg = msgs[0];
-    console.log('[WEBHOOK] from_me:', msg.from_me);
-    
     if (msg.from_me) {
       console.log('[WEBHOOK] Skipping own message');
       return NextResponse.json({ success: true });
     }
-    
+
     const rawPhone = msg.chat_id || msg.from || '';
     const chatId = normalizeChatId(rawPhone);
-    console.log('[WEBHOOK] chatId:', chatId);
-    
     if (!chatId) {
-      console.log('[WEBHOOK] No chatId extracted');
       return NextResponse.json({ error: 'No phone number' }, { status: 400 });
     }
-    
-    let content = msg.text?.body || '';
-    const msgType = msg.type || 'text';
-    console.log('[WEBHOOK] content:', content.substring(0, 100));
-    console.log('[WEBHOOK] msgType:', msgType);
-    
+
     const db = getFirebaseDB();
-    const msgId = (msg.id ? sanitizeKey(msg.id) : 'm_' + Date.now());
-    
-    // Check if we already processed this exact WHAPI message
-    const existingSnap = await get(child(ref(db), 'messages/' + chatId + '/' + msgId));
-    if (existingSnap.exists()) {
-      console.log('[WEBHOOK] Duplicate msg.id ignored:', msg.id);
+
+    // === 1. Save ALL messages with atomic dedup ===
+    let savedCount = 0;
+    for (const m of msgs) {
+      if (m.from_me) continue;
+
+      const mRawPhone = m.chat_id || m.from || rawPhone;
+      const mChatId = normalizeChatId(mRawPhone);
+      if (mChatId !== chatId) continue;
+
+      const mId = m.id ? sanitizeKey(m.id) : 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+
+      // Atomic dedup — only one request wins per msgId
+      const dedupRef = ref(db, 'dedup/' + mId);
+      const dedupResult = await runTransaction(dedupRef, (current) => {
+        if (current) return;
+        return Date.now();
+      });
+      if (!dedupResult.committed) {
+        console.log('[WEBHOOK] Duplicate (atomic skip):', m.id);
+        continue;
+      }
+
+      const mContent = m.text?.body || '';
+      const pushName = m.from_name || m.sender?.pushname || m.sender?.name || m.pushname || m.notify;
+
+      const msgData: Message = {
+        id: mId, chatId: mChatId, content: mContent || '[Imagen]',
+        sender: 'user', timestamp: Date.now(), status: 'delivered'
+      };
+      await set(ref(db, 'messages/' + mChatId + '/' + mId), msgData);
+
+      if (pushName) {
+        const chatSnap = await get(child(ref(db), 'chats/' + mChatId));
+        if (!chatSnap.val()?.name) {
+          await update(ref(db, 'chats/' + mChatId), { name: pushName });
+        }
+      }
+
+      savedCount++;
+    }
+
+    if (savedCount === 0) {
+      console.log('[WEBHOOK] All messages were duplicates');
       return NextResponse.json({ success: true });
     }
-    
-    // Save message to Firebase
+
+    // === 2. Update chat metadata (preserve aiEnabled) ===
     const chatSnap = await get(child(ref(db), 'chats/' + chatId));
-    let oldChat = chatSnap.val() || {};
-    
-    if (!oldChat.name) {
-      const pushName = msg.from_name || msg.sender?.pushname || msg.sender?.name || msg.pushname || msg.notify;
-      if (pushName) {
-        await update(ref(db, 'chats/' + chatId), { name: pushName });
-        oldChat.name = pushName;
-      }
-    }
-    
-    const msgData: Message = { id: msgId, chatId, content: content || '[Imagen]', sender: 'user', timestamp: Date.now(), status: 'delivered' };
-    await set(ref(db, 'messages/' + chatId + '/' + msgId), msgData);
+    const oldChat = chatSnap.val() || {};
+
     await update(ref(db, 'chats/' + chatId), {
       phone: chatId,
-      lastMessage: content || '[Imagen]',
+      lastMessage: msg.text?.body || '[Imagen]',
       lastMessageTime: Date.now(),
-      unreadCount: (oldChat.unreadCount || 0) + 1,
-      aiEnabled: oldChat.aiEnabled !== false
+      unreadCount: (oldChat.unreadCount || 0) + savedCount,
     });
-    console.log('[WEBHOOK] Message saved to Firebase');
-    
-    // Call Gemini
+    console.log('[WEBHOOK] Messages saved:', savedCount);
+
+    // === 3. RESPECT AI TOGGLE ===
+    if (oldChat.aiEnabled === false) {
+      console.log('[WEBHOOK] AI is DISABLED for this chat — no response sent');
+      return NextResponse.json({ success: true });
+    }
+
+    // === 4. Chat-level processing lock (prevents concurrent AI calls) ===
+    const lockRef = ref(db, 'locks/' + chatId);
+    const lockResult = await runTransaction(lockRef, (currentLock) => {
+      if (currentLock && (Date.now() - currentLock) < 30000) return;
+      return Date.now();
+    });
+    if (!lockResult.committed) {
+      console.log('[WEBHOOK] Chat locked by another request — skipping');
+      return NextResponse.json({ success: true });
+    }
+
+    // === 5. Generate AI response ===
     const histSnap = await get(child(ref(db), 'messages/' + chatId));
     const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
-    
+
     let customPrompt = '';
     try {
       const pSnap = await get(child(ref(db), 'system/prompt'));
       if (pSnap.exists()) customPrompt = pSnap.val() || '';
     } catch {}
     const prompt = customPrompt || SYSTEM_PROMPT;
-    const recent = allMsgs.slice(-10).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + content;
-    
+    const recent = allMsgs.slice(-8).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
+    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + (msg.text?.body || '');
+
     console.log('[AI] Calling Gemini...');
-    
     const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
     });
-    
+
     if (!res.ok) {
       const errBody = await res.text();
       console.error('[AI] Gemini error:', res.status, errBody);
-      return NextResponse.json({ success: false, error: 'Gemini error' });
+      return NextResponse.json({ success: false });
     }
-    
+
     const data = await res.json();
     const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    console.log('[AI] Reply from Gemini:', reply ? reply.substring(0, 100) : 'NO REPLY');
-    
-    if (!reply) {
-      console.error('[AI] No reply text');
-      return NextResponse.json({ success: true });
-    }
-    
-    // Send to WhatsApp
+    console.log('[AI] Reply:', reply ? reply.substring(0, 100) : 'NO REPLY');
+
+    if (!reply) return NextResponse.json({ success: true });
+
+    // === 6. Send via WHAPI ===
     console.log('[WHAPI] Sending to:', toWhatsAppId(chatId));
     const whapiRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
       method: 'POST',
       headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN!, 'Content-Type': 'application/json' },
       body: JSON.stringify({ to: toWhatsAppId(chatId), body: reply })
     });
-    
     const whapiData = await whapiRes.json();
-    console.log('[WHAPI] Response:', whapiRes.status, JSON.stringify(whapiData).substring(0, 200));
-    
-    if (!whapiRes.ok) {
-      console.error('[WHAPI] Send failed:', whapiRes.status);
-    }
-    
-    // Save AI response
-    const aiId = 'a_' + Date.now();
+    console.log('[WHAPI] Response:', whapiRes.status);
+
+    // === 7. Save AI response ===
+    const aiId = 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     await set(ref(db, 'messages/' + chatId + '/' + aiId), {
       id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent'
     });
     console.log('[WEBHOOK] === DONE ===');
-    
+
     return NextResponse.json({ success: true });
   } catch (e) {
     console.error('[WEBHOOK] ERROR:', e);
