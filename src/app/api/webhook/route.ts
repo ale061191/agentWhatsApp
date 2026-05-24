@@ -86,6 +86,8 @@ export async function POST(req: NextRequest) {
 
       const mContent = m.text?.body || '';
       const pushName = m.from_name || m.sender?.pushname || m.sender?.name || m.pushname || m.notify;
+      const mType = m.type || 'text';
+      const isImage = mType === 'image' || mType === 'sticker' || !!m.image || mContent === '[Imagen]';
 
       const msgData: Message = {
         id: mId, chatId: mChatId, content: mContent || '[Imagen]',
@@ -126,6 +128,44 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    // === 4. IMAGE THROTTLING LOGIC ===
+    let shouldCallAI = true;
+    let customMsgForAI = msg.text?.body || '';
+
+    if (msgs.some(m => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]')) {
+      const chatRef = ref(db, 'chats/' + chatId);
+      let imgCount = oldChat.imageCount || 0;
+      let newCount = imgCount;
+
+      try {
+        const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount) => {
+          const count = (currentCount || 0) + msgs.filter(m => m.type === 'image' || m.type === 'sticker' || m.image || (m.text?.body || '') === '[Imagen]').length;
+          if (count >= 3) return 0; // reset
+          return count;
+        });
+
+        if (txResult.committed) {
+          newCount = txResult.snapshot.val();
+        }
+      } catch (e) {
+        console.error('[IMG] Transaction failed:', e);
+      }
+
+      console.log('[IMG] Current count:', newCount, '/ 3');
+
+      if (newCount === 0) {
+        console.log('[IMG] Got 3+ images! Triggering AI to request data...');
+        customMsgForAI = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
+      } else {
+        console.log('[IMG] Waiting for more images, staying silent.');
+        shouldCallAI = false;
+      }
+    }
+
+    if (!shouldCallAI) {
+      return NextResponse.json({ success: true });
+    }
+
     // === 5. Generate AI response ===
     const histSnap = await get(child(ref(db), 'messages/' + chatId));
     const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
@@ -137,7 +177,7 @@ export async function POST(req: NextRequest) {
     } catch {}
     const prompt = customPrompt || SYSTEM_PROMPT;
     const recent = allMsgs.slice(-8).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + (msg.text?.body || '');
+    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + customMsgForAI;
 
     console.log('[AI] Calling Gemini...');
     const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
