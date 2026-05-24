@@ -126,17 +126,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // === 4. Chat-level processing lock (prevents concurrent AI calls) ===
-    const lockRef = ref(db, 'locks/' + chatId);
-    const lockResult = await runTransaction(lockRef, (currentLock) => {
-      if (currentLock && (Date.now() - currentLock) < 30000) return;
-      return Date.now();
-    });
-    if (!lockResult.committed) {
-      console.log('[WEBHOOK] Chat locked by another request — skipping');
-      return NextResponse.json({ success: true });
-    }
-
     // === 5. Generate AI response ===
     const histSnap = await get(child(ref(db), 'messages/' + chatId));
     const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
