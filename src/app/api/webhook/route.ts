@@ -208,7 +208,7 @@ export async function POST(req: NextRequest) {
     });
 
     // === 8. Auto-Extraction of Refund Case ===
-    if (reply.toLowerCase().includes('registrado') || reply.toLowerCase().includes('registrada')) {
+    if (reply.toLowerCase().includes('tu caso ha sido registrado')) {
       try {
         console.log('[AI] Registration confirmed, extracting user data...');
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
