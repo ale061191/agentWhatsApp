@@ -206,6 +206,56 @@ export async function POST(req: NextRequest) {
     await set(ref(db, 'messages/' + chatId + '/' + aiId), {
       id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent'
     });
+
+    // === 8. Auto-Extraction of Refund Case ===
+    if (reply.toLowerCase().includes('registrado') || reply.toLowerCase().includes('registrada')) {
+      try {
+        console.log('[AI] Registration confirmed, extracting user data...');
+        const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
+        const extractPrompt = \`Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n\${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "..."\n}\`;
+        
+        const extRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: extractPrompt }] }], generationConfig: { temperature: 0.1 } })
+        });
+        
+        if (extRes.ok) {
+          const extData = await extRes.json();
+          let jsonText = extData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          jsonText = jsonText.replace(/\`\`\`json/gi, '').replace(/\`\`\`/gi, '').trim();
+          
+          if (jsonText) {
+             const userData = JSON.parse(jsonText);
+             const casoId = 'CASO-' + Date.now().toString().slice(-8);
+             const newCaso = {
+                id: chatId,
+                caso_id: casoId,
+                fecha_primer_contacto: new Date().toISOString(),
+                fecha_registro_caso: new Date().toISOString(),
+                datos_usuario: {
+                  nombre_completo: userData.nombre_completo || oldChat.name || '',
+                  cedula: userData.cedula || '',
+                  telefono: userData.telefono || chatId,
+                  numero_cuenta: userData.numero_cuenta || '',
+                  tipo_cuenta: userData.tipo_cuenta || ''
+                },
+                evidencias: {
+                  captura_historial_operaciones: true,
+                  captura_billetera_app: true,
+                  captura_movimientos_bancarios: true
+                },
+                estado_caso: 'pendiente_validacion'
+             };
+             await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
+             console.log('[DB] Auto-extracted and saved caso de reembolso:', casoId);
+          }
+        }
+      } catch (err) {
+        console.error('[EXTRACTION ERROR]', err);
+      }
+    }
+
     console.log('[WEBHOOK] === DONE ===');
 
     return NextResponse.json({ success: true });
