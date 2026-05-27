@@ -48,6 +48,8 @@ Responde EXACTAMENTE ESTO: '¡Hola! Qué gusto saludarte. Te comento que este ca
 [FLUJO DE LIMITACIÓN]
 Responde EXACTAMENTE ESTO: 'Me encantaría ayudarte 😊 pero este canal es solo para reembolsos de VOLTAJE PLUS. Si tienes otras consultas o deseas contactarnos, por favor envíanos un DM a nuestro Instagram @voltajeplus o visita voltajeplus.com. ¡Gracias! 💚'`;
 
+export const maxDuration = 60; // Set max execution time to 60 seconds
+
 export async function POST(req: NextRequest) {
   console.log('[WEBHOOK] === REQUEST START ===');
   
