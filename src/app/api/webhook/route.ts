@@ -240,7 +240,7 @@ export async function POST(req: NextRequest) {
       try {
         console.log('[AI] Registration confirmed, extracting user data...');
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-        const extractPrompt = \`Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n\${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "..."\n}\`;
+        const extractPrompt = `Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "..."\n}`;
         
         const extRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
           method: 'POST',
@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
         if (extRes.ok) {
           const extData = await extRes.json();
           let jsonText = extData.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          jsonText = jsonText.replace(/\`\`\`json/gi, '').replace(/\`\`\`/gi, '').trim();
+          jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
           
           if (jsonText) {
              const userData = JSON.parse(jsonText);
