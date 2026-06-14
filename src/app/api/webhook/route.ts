@@ -43,9 +43,19 @@ Solo la primera vez, preséntate exactamente así: '¡Hola! 👋 Te escribe Soni
 Si reporta fallas o pide reembolso, sé empática pero MUY BREVE. Pídelo así o similar:
 '¡Lamento mucho el inconveniente! 🙏 Para procesar tu caso rapidito, por favor envíame:
 - 3 Capturas: Historial de la app, tu billetera de la app y los movimientos de tu banco.
-- Tus datos: Nombre completo, Cédula, Teléfono, Cuenta y Tipo.
+- Tus datos: Nombre completo, Cédula, Teléfono, Cuenta (debe ser número de cuenta bancaria de 20 dígitos) y Tipo (Ahorro o Corriente).
 ¡Quedo atenta!'
-Cuando tengas ABSOLUTAMENTE TODO, confirma diciendo EXACTAMENTE esto: '¡Perfecto! ✅ Hemos recibido toda la información. Tu caso ha sido registrado. Te contactaremos pronto. Gracias por tu paciencia! 💚'
+
+VALIDACIÓN DE CUENTA BANCARIA (¡MUY IMPORTANTE!):
+- VOLTAJE PLUS solo realiza reembolsos a cuentas bancarias, NO a pago móvil.
+- El número de cuenta bancaria en Venezuela tiene EXACTAMENTE 20 DÍGITOS.
+- Si el usuario te da un número que NO tiene 20 dígitos (pago móvil, referencia, teléfono, etc.), responde con empatía:
+  'Entiendo, pero para procesar el reembolso necesito el número de tu cuenta bancaria de 20 dígitos 🙏. En VOLTAJE PLUS los reembolsos se hacen solo a cuentas bancarias. ¿Puedes verificar tu número de cuenta? ¡Gracias! 💚'
+- NO confirmes el caso hasta que el número tenga exactamente 20 dígitos.
+
+CONFIRMACIÓN CON TIEMPO DE ESPERA:
+Cuando tengas ABSOLUTAMENTE TODOS los datos correctos (incluyendo cuenta de 20 dígitos), confirma así:
+'¡Perfecto! ✅ Hemos recibido toda tu información. Tu caso ha sido registrado exitosamente. El reembolso se procesará en un lapso de 24 a 72 horas hábiles. Te contactaremos pronto. ¡Gracias por tu paciencia! 💚'
 
 [2. TIEMPOS DE ESPERA / DEMORAS]
 Si el usuario pregunta cuánto tiempo tarda el reembolso, se muestra impaciente o ansioso por una respuesta:
@@ -264,31 +274,36 @@ export async function POST(req: NextRequest) {
           let jsonText = extData.candidates?.[0]?.content?.parts?.[0]?.text || '';
           jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
           
-          if (jsonText) {
-             const userData = JSON.parse(jsonText);
-             const casoId = 'CASO-' + Date.now().toString().slice(-8);
-             const newCaso = {
-                id: chatId,
-                caso_id: casoId,
-                fecha_primer_contacto: new Date().toISOString(),
-                fecha_registro_caso: new Date().toISOString(),
-                datos_usuario: {
-                  nombre_completo: userData.nombre_completo || oldChat.name || '',
-                  cedula: userData.cedula || '',
-                  telefono: userData.telefono || chatId,
-                  numero_cuenta: userData.numero_cuenta || '',
-                  tipo_cuenta: userData.tipo_cuenta || ''
-                },
-                evidencias: {
-                  captura_historial_operaciones: true,
-                  captura_billetera_app: true,
-                  captura_movimientos_bancarios: true
-                },
-                estado_caso: 'pendiente_validacion'
-             };
-             await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
-             console.log('[DB] Auto-extracted and saved caso de reembolso:', casoId);
-          }
+           if (jsonText) {
+              const userData = JSON.parse(jsonText);
+              const rawAccount = (userData.numero_cuenta || '').replace(/\D/g, '');
+              if (rawAccount.length !== 20) {
+                console.log('[DB] Skipping case save: account must be 20 digits, got', rawAccount.length);
+              } else {
+                const casoId = 'CASO-' + Date.now().toString().slice(-8);
+                const newCaso = {
+                   id: chatId,
+                   caso_id: casoId,
+                   fecha_primer_contacto: new Date().toISOString(),
+                   fecha_registro_caso: new Date().toISOString(),
+                   datos_usuario: {
+                     nombre_completo: userData.nombre_completo || oldChat.name || '',
+                     cedula: userData.cedula || '',
+                     telefono: userData.telefono || chatId,
+                     numero_cuenta: rawAccount,
+                     tipo_cuenta: userData.tipo_cuenta || ''
+                   },
+                   evidencias: {
+                     captura_historial_operaciones: true,
+                     captura_billetera_app: true,
+                     captura_movimientos_bancarios: true
+                   },
+                   estado_caso: 'pendiente_validacion'
+                };
+                await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
+                console.log('[DB] Auto-extracted and saved caso de reembolso:', casoId);
+              }
+           }
         }
       } catch (err) {
         console.error('[EXTRACTION ERROR]', err);
