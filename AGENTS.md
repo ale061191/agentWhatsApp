@@ -52,6 +52,7 @@ El archivo `src/app/api/webhook/route.ts` es crítico. Preguntar antes de cualqu
 
 ### Firebase Rules — Gotcha conocido
 Para poder leer listas (`chats/`, `messages/`, `casos_reembolso/`), se necesita `".read": true` a nivel del padre, no solo en el wildcard `$chatId`.
+El path `locks/{chatId}` también debe estar en las reglas (`.read` + `.write`) para que el debounce lock funcione.
 
 ## Comandos
 ```bash

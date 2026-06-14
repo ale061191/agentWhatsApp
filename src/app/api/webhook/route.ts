@@ -209,35 +209,36 @@ export async function POST(req: NextRequest) {
     }
 
     // === 5. DEBOUNCE LOCK — agrupar mensajes rápidos ===
-    const LOCK_TTL = 10000;
-    const DEBOUNCE_MS = 1500;
+    try {
+      const lockRef = ref(db, 'locks/' + chatId);
+      const lockResult = await runTransaction(lockRef, (currentLock: any) => {
+        if (currentLock && (Date.now() - currentLock.ts) < 10000) return;
+        return { ts: Date.now() };
+      });
 
-    const lockRef = ref(db, 'locks/' + chatId);
-    const lockResult = await runTransaction(lockRef, (currentLock: any) => {
-      if (currentLock && (Date.now() - currentLock.ts) < LOCK_TTL) return;
-      return { ts: Date.now() };
-    });
-
-    if (!lockResult.committed) {
-      if (didTrigger) {
-        await update(ref(db, 'chats/' + chatId), { pendingImageTrigger: true });
+      if (!lockResult.committed) {
+        if (didTrigger) {
+          await update(ref(db, 'chats/' + chatId), { pendingImageTrigger: true });
+        }
+        console.log('[LOCK] Debounce active, message queued');
+        return NextResponse.json({ success: true });
       }
-      console.log('[LOCK] Debounce active, message queued');
-      return NextResponse.json({ success: true });
-    }
 
-    console.log('[LOCK] Lock acquired, debouncing', DEBOUNCE_MS, 'ms');
-    await new Promise(resolve => setTimeout(resolve, DEBOUNCE_MS));
-    console.log('[LOCK] Debounce complete, processing batch');
+      console.log('[LOCK] Lock acquired, debouncing 1500ms');
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      console.log('[LOCK] Debounce complete, processing batch');
 
-    await set(lockRef, null);
+      await set(lockRef, null);
 
-    const chatPostLock = await get(child(ref(db), 'chats/' + chatId));
-    const chatPostData = chatPostLock.val() || {};
-    if (chatPostData.pendingImageTrigger) {
-      console.log('[LOCK] Image trigger during debounce, injecting');
-      customMsgForAI = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
-      await update(ref(db, 'chats/' + chatId), { pendingImageTrigger: null });
+      const chatPostLock = await get(child(ref(db), 'chats/' + chatId));
+      const chatPostData = chatPostLock.val() || {};
+      if (chatPostData.pendingImageTrigger) {
+        console.log('[LOCK] Image trigger during debounce, injecting');
+        customMsgForAI = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
+        await update(ref(db, 'chats/' + chatId), { pendingImageTrigger: null });
+      }
+    } catch (e) {
+      console.log('[LOCK] Error (likely Firebase rules), falling through to direct AI call:', e);
     }
 
     // === 6. Generate AI response ===
