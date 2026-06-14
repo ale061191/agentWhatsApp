@@ -166,6 +166,7 @@ export async function POST(req: NextRequest) {
     // === 4. IMAGE THROTTLING LOGIC ===
     let shouldCallAI = true;
     let customMsgForAI = msg.text?.body || '';
+    let didTrigger = false;
 
     const isImageMessage = (m: any) => {
       const mType = m.type || 'text';
@@ -176,7 +177,6 @@ export async function POST(req: NextRequest) {
     if (msgs.some(isImageMessage)) {
       const chatRef = ref(db, 'chats/' + chatId);
       let newCount = 0;
-      let didTrigger = false;
 
       try {
         const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount) => {
@@ -208,7 +208,39 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // === 5. Generate AI response ===
+    // === 5. DEBOUNCE LOCK — agrupar mensajes rápidos ===
+    const LOCK_TTL = 10000;
+    const DEBOUNCE_MS = 1500;
+
+    const lockRef = ref(db, 'locks/' + chatId);
+    const lockResult = await runTransaction(lockRef, (currentLock: any) => {
+      if (currentLock && (Date.now() - currentLock.ts) < LOCK_TTL) return;
+      return { ts: Date.now() };
+    });
+
+    if (!lockResult.committed) {
+      if (didTrigger) {
+        await update(ref(db, 'chats/' + chatId), { pendingImageTrigger: true });
+      }
+      console.log('[LOCK] Debounce active, message queued');
+      return NextResponse.json({ success: true });
+    }
+
+    console.log('[LOCK] Lock acquired, debouncing', DEBOUNCE_MS, 'ms');
+    await new Promise(resolve => setTimeout(resolve, DEBOUNCE_MS));
+    console.log('[LOCK] Debounce complete, processing batch');
+
+    await set(lockRef, null);
+
+    const chatPostLock = await get(child(ref(db), 'chats/' + chatId));
+    const chatPostData = chatPostLock.val() || {};
+    if (chatPostData.pendingImageTrigger) {
+      console.log('[LOCK] Image trigger during debounce, injecting');
+      customMsgForAI = '[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]';
+      await update(ref(db, 'chats/' + chatId), { pendingImageTrigger: null });
+    }
+
+    // === 6. Generate AI response ===
     const histSnap = await get(child(ref(db), 'messages/' + chatId));
     const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
 
@@ -240,7 +272,7 @@ export async function POST(req: NextRequest) {
 
     if (!reply) return NextResponse.json({ success: true });
 
-    // === 6. Send via WHAPI ===
+    // === 7. Send via WHAPI ===
     console.log('[WHAPI] Sending to:', toWhatsAppId(chatId));
     const whapiRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
       method: 'POST',
@@ -250,13 +282,13 @@ export async function POST(req: NextRequest) {
     const whapiData = await whapiRes.json();
     console.log('[WHAPI] Response:', whapiRes.status);
 
-    // === 7. Save AI response ===
+    // === 8. Save AI response ===
     const aiId = 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
     await set(ref(db, 'messages/' + chatId + '/' + aiId), {
       id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent'
     });
 
-    // === 8. Auto-Extraction of Refund Case ===
+    // === 9. Auto-Extraction of Refund Case ===
     if (reply.toLowerCase().includes('tu caso ha sido registrado')) {
       try {
         console.log('[AI] Registration confirmed, extracting user data...');
