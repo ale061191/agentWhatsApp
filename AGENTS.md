@@ -17,7 +17,8 @@ El archivo `src/app/api/webhook/route.ts` es crítico. Preguntar antes de cualqu
    - Transacción en `chats/{chatId}/imageCount`.
    - Imagen 1 y 2: Sonia se queda callada (`shouldCallAI = false`).
    - Al llegar a 3+: contador se reinicia a 0, se inyecta a Gemini: `[Sistema: El usuario ha enviado 3 imagenes. Ahora debe pedir los datos personales y bancarios.]`
-4. **Cero Candados de Tiempo:** No hay bloqueos de 15/30 segundos. Gemini se procesa síncrono si pasa la barrera de imágenes/dedup.
+4. **Debounce Lock (1.5s):** Tras pasar imágenes/dedup, se adquiere un lock atómico en `locks/{chatId}`. Si se obtiene, espera 1.5s para acumular mensajes rápidos y llama a Gemini UNA VEZ con todo el batch. Si no se obtiene, guarda el mensaje y retorna. TTL de 10s por si el lock-holder crashea.
+5. **Cero Candados de Tiempo:** No hay bloqueos artificiales de 15/30 segundos que interfieran con el envío de imágenes.
 
 ## Arquitectura del Proyecto
 
