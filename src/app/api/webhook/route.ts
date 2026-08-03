@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Message } from '@/types';
 import { getFirebaseDB } from '@/lib/firebase';
-import { ref, set, get, child, update, runTransaction } from 'firebase/database';
+import { Database, ref, set, get, child, update, runTransaction } from 'firebase/database';
+import {
+  buildMenuText,
+  detectFlow,
+  getFlowPrompt,
+  SONIA_IDENTITY,
+  FlowId,
+} from '@/lib/menu';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
@@ -20,60 +27,38 @@ function sanitizeKey(key: string): string {
   return key.replace(/[.#$\[\]]/g, '_');
 }
 
-const SYSTEM_PROMPT = `Eres SONIA, una agente humana de atención al cliente de VOLTAJE PLUS.
-IDENTIDAD: Nombre: Sonia. Empresa: VOLTAJE PLUS (power banks en Venezuela). Función: Gestión de reembolsos.
+/** Guarda un mensaje saliente del agente y lo persiste en el historial. */
+async function saveAgentMessage(db: Database, chatId: string, content: string) {
+  const aiId = 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+  await set(ref(db, 'messages/' + chatId + '/' + aiId), {
+    id: aiId,
+    chatId,
+    content,
+    sender: 'agent',
+    timestamp: Date.now(),
+    status: 'sent',
+  });
+  await update(ref(db, 'chats/' + chatId), {
+    lastMessage: content,
+    lastMessageTime: Date.now(),
+  });
+}
 
-TONO Y ESTILO (¡MUY IMPORTANTE!):
-1. HABLA EN PRIMERA PERSONA ("yo"). NUNCA hables en tercera persona ni digas "yo como Sonia" o "mi función como Sonia". Tú eres Sonia, una humana real y conversacional. Que el usuario no note que eres una IA.
-2. SÉ BREVE, CONCISA Y AL GRANO. Da respuestas cortas y directas de máximo 2 o 3 líneas. NO escribas párrafos largos.
-3. USA EMOJIS para sonar amigable y natural (😊, 💚, 🙌, 🙏, 🥺), pero sin exagerar.
-4. EVITA LA REPETICIÓN: Varía tus respuestas si el usuario insiste, pero mantén siempre la brevedad.
+/** Envía texto por WhatsApp vía WHAPI y devuelve si fue OK. */
+async function sendWhapi(chatId: string, text: string): Promise<boolean> {
+  const res = await fetch(WHAPI_BASE_URL + '/messages/text', {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN!, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to: toWhatsAppId(chatId), body: text }),
+  });
+  return res.ok;
+}
 
-REGLAS ESTRICTAS:
-- NO inventes información.
-- NO atiendas temas ajenos a reembolsos.
-- SIEMPRE espera todos los datos antes de validar un reembolso.
-
-FLUJO DE ATENCIÓN:
-
-[SALUDO INICIAL]
-Solo la primera vez, preséntate exactamente así: '¡Hola! 👋 Te escribe Sonia del equipo de atención al cliente de VOLTAJE PLUS. Cuéntame, ¿en qué te puedo ayudar hoy?'
-
-[1. FLUJO DE REEMBOLSO]
-Si reporta fallas o pide reembolso, sé empática pero MUY BREVE. Pídelo así o similar:
-'¡Lamento mucho el inconveniente! 🙏 Para procesar tu caso rapidito, por favor envíame:
-- 3 Capturas: Historial de la app, tu billetera de la app y los movimientos de tu banco.
-- Tus datos: Nombre completo, Cédula, Teléfono, Cuenta (debe ser número de cuenta bancaria de 20 dígitos) y Tipo (Ahorro o Corriente).
-¡Quedo atenta!'
-
-VALIDACIÓN DE CUENTA BANCARIA (¡MUY IMPORTANTE!):
-- VOLTAJE PLUS solo realiza reembolsos a cuentas bancarias, NO a pago móvil.
-- El número de cuenta bancaria en Venezuela tiene EXACTAMENTE 20 DÍGITOS.
-- Si el usuario te da un número que NO tiene 20 dígitos (pago móvil, referencia, teléfono, etc.), responde con empatía:
-  'Entiendo, pero para procesar el reembolso necesito el número de tu cuenta bancaria de 20 dígitos 🙏. En VOLTAJE PLUS los reembolsos se hacen solo a cuentas bancarias. ¿Puedes verificar tu número de cuenta? ¡Gracias! 💚'
-- NO confirmes el caso hasta que el número tenga exactamente 20 dígitos.
-
-CONFIRMACIÓN CON TIEMPO DE ESPERA:
-Cuando tengas ABSOLUTAMENTE TODOS los datos correctos (incluyendo cuenta de 20 dígitos), confirma así:
-'¡Perfecto! ✅ Hemos recibido toda tu información. Tu caso ha sido registrado exitosamente. El reembolso se procesará en un lapso de 24 a 72 horas hábiles. Te contactaremos pronto. ¡Gracias por tu paciencia! 💚'
-
-[2. TIEMPOS DE ESPERA / DEMORAS]
-Si el usuario pregunta cuánto tiempo tarda el reembolso, se muestra impaciente o ansioso por una respuesta:
-Respóndele con muchísima empatía para darle paz, confort y tranquilidad. Usando tus propias palabras y en primera persona, dile que entiendes perfectamente su preocupación, pero que le aseguras que enviarás su caso al equipo correspondiente de inmediato y que apenas se resuelva le estarás dando respuesta. Sé muy cálida (ej. "¡Te entiendo perfectamente! 🥺 No te preocupes, ya envié tu caso al equipo encargado y apenas me den respuesta te aviso de inmediato. ¡Tranquilo/a! 🙌").
-
-[3. FLUJO DE VENTAS]
-Si pregunta por máquinas, negocio, alianzas o compras, responde corto y natural:
-'¡Qué bueno que te interese el negocio! 😊 Pero te comento que por aquí solo me encargo de los reembolsos. Para información de ventas o máquinas, escríbeles al Instagram @voltajeplus o visita voltajeplus.com. ¡Allí te atenderán genial! 💚'
-
-[4. FLUJO DE LIMITACIÓN]
-Si hace otra pregunta o manda emojis sueltos ("🤔⁉️"), recuérdale brevemente:
-'Me encantaría ayudarte, pero de verdad por este medio solo veo casos de reembolsos 🥺. Para cualquier otra cosita, escríbenos al Instagram @voltajeplus. ¡Gracias por entender! 💚'`;
-
-export const maxDuration = 60; // Set max execution time to 60 seconds
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   console.log('[WEBHOOK] === REQUEST START ===');
-  
+
   try {
     const body = await req.json();
     const msgs = body.messages || [];
@@ -108,7 +93,6 @@ export async function POST(req: NextRequest) {
 
       const mId = m.id ? sanitizeKey(m.id) : 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
 
-      // Atomic dedup — only one request wins per msgId
       const dedupRef = ref(db, 'dedup/' + mId);
       const dedupResult = await runTransaction(dedupRef, (current) => {
         if (current) return;
@@ -146,10 +130,11 @@ export async function POST(req: NextRequest) {
     }
 
     // === 2. Update chat metadata (preserve aiEnabled) ===
-    const chatSnap = await get(child(ref(db), 'chats/' + chatId));
+    const chatRef = ref(db, 'chats/' + chatId);
+    const chatSnap = await get(chatRef);
     const oldChat = chatSnap.val() || {};
 
-    await update(ref(db, 'chats/' + chatId), {
+    await update(chatRef, {
       phone: chatId,
       lastMessage: msg.text?.body || '[Imagen]',
       lastMessageTime: Date.now(),
@@ -230,7 +215,7 @@ export async function POST(req: NextRequest) {
 
       await set(lockRef, null);
 
-      const chatPostLock = await get(child(ref(db), 'chats/' + chatId));
+      const chatPostLock = await get(ref(db, 'chats/' + chatId));
       const chatPostData = chatPostLock.val() || {};
       if (chatPostData.pendingImageTrigger) {
         console.log('[LOCK] Image trigger during debounce, injecting');
@@ -241,24 +226,70 @@ export async function POST(req: NextRequest) {
       console.log('[LOCK] Error (likely Firebase rules), falling through to direct AI call:', e);
     }
 
-    // === 6. Generate AI response ===
-    const histSnap = await get(child(ref(db), 'messages/' + chatId));
+    // === 5B. MENÚ / ESTADO DE CONVERSACIÓN ===
+    // Lee el estado previamente persistido para determinar el flujo activo.
+    const estadoRef = ref(db, 'estado_conversacion/' + chatId);
+    let estado: { flow?: FlowId } = {};
+    try {
+      const estSnap = await get(estadoRef);
+      if (estSnap.exists()) estado = estSnap.val() || {};
+    } catch (e) {
+      console.log('[MENU] Error reading estado (likely rules), defaulting to menu:', e);
+    }
+
+    const userText = (customMsgForAI || '').trim();
+
+    // PRIMER CONTACTO: aún no hay estado registrado.
+    // - Si el primer mensaje ya tiene intención clara (ej: "reembolso"),
+    //   saltamos directo al flujo sin mostrar el menú.
+    // - Si no hay intención clara, mostramos el menú de bienvenida UNA vez.
+    if (!estado.flow) {
+      const firstIntent = detectFlow(userText);
+      if (firstIntent && firstIntent !== 'menu') {
+        console.log('[MENU] First contact with clear intent -> flow:', firstIntent);
+        await set(estadoRef, { flow: firstIntent, firstSent: Date.now() });
+        estado = { flow: firstIntent };
+      } else {
+        console.log('[MENU] First contact — sending menu.');
+        const menuText = buildMenuText();
+        await sendWhapi(chatId, menuText);
+        await saveAgentMessage(db, chatId, menuText);
+        await set(estadoRef, { flow: 'menu', firstSent: Date.now() });
+        console.log('[MENU] Menu sent.');
+        return NextResponse.json({ success: true });
+      }
+    }
+
+    // Detectar a qué flujo debe moverse según el mensaje del usuario.
+    const detected = detectFlow(userText);
+    let activeFlow: FlowId = estado.flow || 'menu';
+
+    if (detected && detected !== estado.flow) {
+      activeFlow = detected;
+      console.log('[MENU] Flow changed to:', activeFlow);
+    } else if (detected === 'menu') {
+      activeFlow = 'menu';
+    }
+
+    // Persistimos el flujo actual para la siguiente iteración.
+    await update(estadoRef, { flow: activeFlow });
+
+    // === 7. Generate AI response ===
+    const histSnap = await get(ref(db, 'messages/' + chatId));
     const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
 
-    let customPrompt = '';
-    try {
-      const pSnap = await get(child(ref(db), 'system/prompt'));
-      if (pSnap.exists()) customPrompt = pSnap.val() || '';
-    } catch {}
-    const prompt = customPrompt || SYSTEM_PROMPT;
+    // Priorizamos SIEMPRE la identidad + flujo del CÓDIGO (son la fuente de
+    // verdad), para que la personalidad y las respuestas del CEO apliquen.
+    const basePrompt = SONIA_IDENTITY;
+    const flowInstructions = getFlowPrompt(activeFlow);
     const recent = allMsgs.slice(-8).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-    const fullPrompt = prompt + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + customMsgForAI;
+    const fullPrompt = basePrompt + '\n\n' + flowInstructions + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + customMsgForAI;
 
-    console.log('[AI] Calling Gemini...');
+    console.log('[AI] Calling Gemini... (flow:', activeFlow + ')');
     const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.7 } })
+      body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.4 } })
     });
 
     if (!res.ok) {
@@ -273,40 +304,33 @@ export async function POST(req: NextRequest) {
 
     if (!reply) return NextResponse.json({ success: true });
 
-    // === 7. Send via WHAPI ===
+    // === 8. Send via WHAPI (with verification) ===
     console.log('[WHAPI] Sending to:', toWhatsAppId(chatId));
-    const whapiRes = await fetch(WHAPI_BASE_URL + '/messages/text', {
-      method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + WHAPI_TOKEN!, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to: toWhatsAppId(chatId), body: reply })
-    });
-    const whapiData = await whapiRes.json();
-    console.log('[WHAPI] Response:', whapiRes.status);
+    const whapiOk = await sendWhapi(chatId, reply);
+    const whapiLive = whapiOk;
+    console.log('[WHAPI] Response:', whapiLive ? 'sent' : 'FAILED');
 
-    // === 8. Save AI response ===
-    const aiId = 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-    await set(ref(db, 'messages/' + chatId + '/' + aiId), {
-      id: aiId, chatId, content: reply, sender: 'agent', timestamp: Date.now(), status: 'sent'
-    });
+    // === 9. Save AI response ===
+    await saveAgentMessage(db, chatId, reply);
 
-    // === 9. Auto-Extraction of Refund Case ===
+    // === 10. Auto-Extraction of Refund Case ===
     if (reply.toLowerCase().includes('tu caso ha sido registrado')) {
       try {
         console.log('[AI] Registration confirmed, extracting user data...');
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
         const extractPrompt = `Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "..."\n}`;
-        
+
         const extRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ contents: [{ parts: [{ text: extractPrompt }] }], generationConfig: { temperature: 0.1 } })
         });
-        
+
         if (extRes.ok) {
           const extData = await extRes.json();
           let jsonText = extData.candidates?.[0]?.content?.parts?.[0]?.text || '';
           jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
-          
+
            if (jsonText) {
               const userData = JSON.parse(jsonText);
               const rawAccount = (userData.numero_cuenta || '').replace(/\D/g, '');
