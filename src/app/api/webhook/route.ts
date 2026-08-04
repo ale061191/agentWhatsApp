@@ -14,6 +14,11 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
 const WHAPI_TOKEN = process.env.WHAPI_TOKEN;
 
+// --- AI providers: agnes (primary, OpenAI-compatible) + Gemini (fallback) ---
+const AGNES_API_KEY = process.env.AGNES_API_KEY;
+const AGNES_BASE_URL = 'https://apihub.agnes-ai.com/v1';
+const AGNES_MODEL = 'agnes-2.5-flash';
+
 function normalizeChatId(rawPhone: string): string {
   return rawPhone.replace('@s.whatsapp.net', '').replace('@c.us', '').replace(/\D/g, '');
 }
@@ -52,6 +57,59 @@ async function sendWhapi(chatId: string, text: string): Promise<boolean> {
     body: JSON.stringify({ to: toWhatsAppId(chatId), body: text }),
   });
   return res.ok;
+}
+
+/**
+ * Genera texto de IA. PRIMERO AGNES (OpenAI-compatible); si no está
+ * configurada o falla, cae a Gemini. Devuelve '' si ambos fallan.
+ */
+async function callAI(prompt: string, temperature: number, extractMode = false): Promise<string> {
+  // 1) Agnes (primary)
+  if (AGNES_API_KEY) {
+    try {
+      const res = await fetch(AGNES_BASE_URL + '/chat/completions', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + AGNES_API_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: AGNES_MODEL,
+          temperature,
+          messages: [
+            { role: 'system', content: extractMode ? 'Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").' : 'Eres Sonia de VOLTAJE PLUS. Da respuestas naturales y breves en primera persona. No digas que eres IA.' },
+            { role: 'user', content: prompt },
+          ],
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content;
+        if (typeof text === 'string' && text.trim()) return text.trim();
+      }
+      console.error('[AI] agnes failed:', res.status);
+    } catch (e) {
+      console.error('[AI] agnes error:', e);
+    }
+  }
+
+  // 2) Gemini (fallback)
+  if (GOOGLE_API_KEY) {
+    try {
+      const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature } })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (typeof text === 'string' && text.trim()) return text.trim();
+      }
+      console.error('[AI] gemini failed:', res.status);
+    } catch (e) {
+      console.error('[AI] gemini error:', e);
+    }
+  }
+
+  return '';
 }
 
 export const maxDuration = 60;
@@ -227,14 +285,16 @@ export async function POST(req: NextRequest) {
     }
 
     // === 5B. MENÚ / ESTADO DE CONVERSACIÓN ===
-    // Lee el estado previamente persistido para determinar el flujo activo.
-    const estadoRef = ref(db, 'estado_conversacion/' + chatId);
+    // El estado del flujo se persiste DENTRO de chats/{chatId}/estado (path
+    // que el webhook ya usa y las reglas ya permiten), evitando depender de un
+    // path nuevo que podría estar bloqueado por las reglas de Firebase.
+    const chatEstRef = ref(db, 'chats/' + chatId);
     let estado: { flow?: FlowId } = {};
     try {
-      const estSnap = await get(estadoRef);
-      if (estSnap.exists()) estado = estSnap.val() || {};
+      const chatSnap2 = await get(chatEstRef);
+      estado = chatSnap2.val()?.estado || {};
     } catch (e) {
-      console.log('[MENU] Error reading estado (likely rules), defaulting to menu:', e);
+      console.log('[MENU] Error reading chat.estado (defaults to menu):', e);
     }
 
     const userText = (customMsgForAI || '').trim();
@@ -247,14 +307,14 @@ export async function POST(req: NextRequest) {
       const firstIntent = detectFlow(userText);
       if (firstIntent && firstIntent !== 'menu') {
         console.log('[MENU] First contact with clear intent -> flow:', firstIntent);
-        await set(estadoRef, { flow: firstIntent, firstSent: Date.now() });
         estado = { flow: firstIntent };
+        try { await update(chatEstRef, { estado }); } catch (e) { console.log('[MENU] persist intent failed:', e); }
       } else {
         console.log('[MENU] First contact — sending menu.');
         const menuText = buildMenuText();
         await sendWhapi(chatId, menuText);
         await saveAgentMessage(db, chatId, menuText);
-        await set(estadoRef, { flow: 'menu', firstSent: Date.now() });
+        try { await update(chatEstRef, { estado: { flow: 'menu', firstSent: Date.now() } }); } catch (e) { console.log('[MENU] persist menu failed:', e); }
         console.log('[MENU] Menu sent.');
         return NextResponse.json({ success: true });
       }
@@ -271,8 +331,12 @@ export async function POST(req: NextRequest) {
       activeFlow = 'menu';
     }
 
-    // Persistimos el flujo actual para la siguiente iteración.
-    await update(estadoRef, { flow: activeFlow });
+    // Persistimos el flujo actual para la siguiente iteración (best-effort).
+    try {
+      await update(chatEstRef, { estado: { flow: activeFlow } });
+    } catch (e) {
+      console.log('[MENU] persist flow failed:', e);
+    }
 
     // === 7. Generate AI response ===
     const histSnap = await get(ref(db, 'messages/' + chatId));
@@ -285,21 +349,8 @@ export async function POST(req: NextRequest) {
     const recent = allMsgs.slice(-8).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
     const fullPrompt = basePrompt + '\n\n' + flowInstructions + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + customMsgForAI;
 
-    console.log('[AI] Calling Gemini... (flow:', activeFlow + ')');
-    const res = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents: [{ parts: [{ text: fullPrompt }] }], generationConfig: { temperature: 0.4 } })
-    });
-
-    if (!res.ok) {
-      const errBody = await res.text();
-      console.error('[AI] Gemini error:', res.status, errBody);
-      return NextResponse.json({ success: false });
-    }
-
-    const data = await res.json();
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    console.log('[AI] Calling AI... (flow:', activeFlow + ')');
+    const reply = await callAI(fullPrompt, 0.4);
     console.log('[AI] Reply:', reply ? reply.substring(0, 100) : 'NO REPLY');
 
     if (!reply) return NextResponse.json({ success: true });
@@ -320,15 +371,10 @@ export async function POST(req: NextRequest) {
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
         const extractPrompt = `Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "..."\n}`;
 
-        const extRes = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + GOOGLE_API_KEY, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts: [{ text: extractPrompt }] }], generationConfig: { temperature: 0.1 } })
-        });
+        const extRes = await callAI(extractPrompt, 0.1, true);
 
-        if (extRes.ok) {
-          const extData = await extRes.json();
-          let jsonText = extData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        if (extRes) {
+          let jsonText = extRes;
           jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
 
            if (jsonText) {
