@@ -299,25 +299,17 @@ export async function POST(req: NextRequest) {
 
     const userText = (customMsgForAI || '').trim();
 
-    // PRIMER CONTACTO: aún no hay estado registrado.
-    // - Si el primer mensaje ya tiene intención clara (ej: "reembolso"),
-    //   saltamos directo al flujo sin mostrar el menú.
-    // - Si no hay intención clara, mostramos el menú de bienvenida UNA vez.
+    // PRIMER CONTACTO: aún no hay estado registrado → SIEMPRE mostrar el menú
+    // de bienvenida una vez, sin importar si el mensaje trae intención clara.
+    // (Decisión de Ezequiel 04/08/2026: uniformidad en el primer contacto.)
     if (!estado.flow) {
-      const firstIntent = detectFlow(userText);
-      if (firstIntent && firstIntent !== 'menu') {
-        console.log('[MENU] First contact with clear intent -> flow:', firstIntent);
-        estado = { flow: firstIntent };
-        try { await update(chatEstRef, { estado }); } catch (e) { console.log('[MENU] persist intent failed:', e); }
-      } else {
-        console.log('[MENU] First contact — sending menu.');
-        const menuText = buildMenuText();
-        await sendWhapi(chatId, menuText);
-        await saveAgentMessage(db, chatId, menuText);
-        try { await update(chatEstRef, { estado: { flow: 'menu', firstSent: Date.now() } }); } catch (e) { console.log('[MENU] persist menu failed:', e); }
-        console.log('[MENU] Menu sent.');
-        return NextResponse.json({ success: true });
-      }
+      console.log('[MENU] First contact — sending menu.');
+      const menuText = buildMenuText();
+      await sendWhapi(chatId, menuText);
+      await saveAgentMessage(db, chatId, menuText);
+      try { await update(chatEstRef, { estado: { flow: 'menu', firstSent: Date.now() } }); } catch (e) { console.log('[MENU] persist menu failed:', e); }
+      console.log('[MENU] Menu sent.');
+      return NextResponse.json({ success: true });
     }
 
     // Detectar a qué flujo debe moverse según el mensaje del usuario.
