@@ -17,6 +17,7 @@ interface CasoReembolso {
     tipo_cuenta: string;
     ubicacion_estacion?: string;
     fecha_alquiler?: string;
+    hora_alquiler?: string;
     referencia_bancaria?: string;
     monto_reembolso?: string;
   };
@@ -145,7 +146,8 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
       'Teléfono': caso.datos_usuario?.telefono || '-',
       'Cuenta': caso.datos_usuario?.numero_cuenta || '-',
       'Ubicación': caso.datos_usuario?.ubicacion_estacion || '-',
-      'Fecha Alquiler': caso.datos_usuario?.fecha_alquiler ? formatDate(caso.datos_usuario.fecha_alquiler) : '-',
+      'Fecha Alquiler': caso.datos_usuario?.fecha_alquiler || '-',
+      'Hora Alquiler': caso.datos_usuario?.hora_alquiler || '-',
       'Referencia': caso.datos_usuario?.referencia_bancaria || '-',
       'Monto': caso.datos_usuario?.monto_reembolso || '-',
       'Estado': getEstadoLabel(caso),
@@ -164,9 +166,9 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-[96vw] xl:max-w-[1400px] max-h-[88vh] bg-[#111317] border border-[rgba(37,211,102,0.25)] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+      <div className="relative w-full max-w-[98vw] max-h-[92vh] bg-[#111317] border border-[rgba(37,211,102,0.25)] rounded-2xl shadow-2xl overflow-hidden flex flex-col"
         style={{ boxShadow: '0 0 60px rgba(37,211,102,0.08)' }}>
         
         {/* ── Header ── */}
@@ -261,8 +263,8 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
             <table className="w-full text-sm" style={{ borderSpacing: '0 4px', borderCollapse: 'separate' }}>
               <thead className="sticky top-0 bg-[#111317] z-10">
                 <tr>
-                  {['ID', 'FECHA', 'USUARIO', 'CÉDULA', 'TELÉFONO', 'CUENTA', 'UBICACIÓN', 'FECHA ALQUILER', 'REFERENCIA', 'MONTO', 'ESTADO', 'ATENDIDO'].map(h => (
-                    <th key={h} className="text-left text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 16px' }}>{h}</th>
+                  {['ID', 'FECHA', 'USUARIO', 'CÉDULA', 'TELÉFONO', 'CUENTA', 'UBICACIÓN', 'FECHA ALQ.', 'HORA ALQ.', 'REFERENCIA', 'MONTO', 'ESTADO', 'ATENDIDO'].map(h => (
+                    <th key={h} className="text-left text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 14px' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -270,26 +272,27 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
                 {paginatedCasos.map(caso => (
                   <tr key={caso.id} className="hover:bg-[rgba(37,211,102,0.04)] transition-colors group rounded-xl"
                     style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                    <td style={{ padding: '16px' }}>
-                      <span className="text-[#25d366] font-mono text-xs bg-[#25d366]/10 rounded-lg" style={{ padding: '5px 10px' }}>
+                    <td style={{ padding: '14px' }}>
+                      <span className="text-[#25d366] font-mono text-xs bg-[#25d366]/10 rounded-lg" style={{ padding: '4px 8px' }}>
                         {(caso.caso_id || caso.id).slice(0, 13)}
                       </span>
                     </td>
-                    <td className="text-gray-400 text-xs whitespace-nowrap" style={{ padding: '16px' }}>{formatDate(caso.fecha_registro_caso)}</td>
-                    <td style={{ padding: '16px' }}><span className="text-white font-medium">{caso.datos_usuario?.nombre_completo || '-'}</span></td>
-                    <td className="text-gray-300 font-mono text-xs" style={{ padding: '16px' }}>{caso.datos_usuario?.cedula || '-'}</td>
-                    <td className="text-gray-300 text-xs" style={{ padding: '16px' }}>{caso.datos_usuario?.telefono || '-'}</td>
-                    <td style={{ padding: '16px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.numero_cuenta || '-'}</span></td>
-                    <td style={{ padding: '16px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.ubicacion_estacion || '-'}</span></td>
-                    <td style={{ padding: '16px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.fecha_alquiler ? formatDate(caso.datos_usuario.fecha_alquiler) : '-'}</span></td>
-                    <td style={{ padding: '16px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.referencia_bancaria || '-'}</span></td>
-                    <td style={{ padding: '16px' }}><span className="text-yellow-400 font-mono text-xs">{caso.datos_usuario?.monto_reembolso || '-'}</span></td>
-                    <td className="text-center" style={{ padding: '16px' }}>
-                      <span className={`inline-block rounded-full text-xs border font-semibold ${getEstadoColor(caso)}`} style={{ padding: '5px 14px' }}>
+                    <td className="text-gray-400 text-xs whitespace-nowrap" style={{ padding: '14px' }}>{formatDate(caso.fecha_registro_caso)}</td>
+                    <td style={{ padding: '14px' }}><span className="text-white font-medium">{caso.datos_usuario?.nombre_completo || '-'}</span></td>
+                    <td className="text-gray-300 font-mono text-xs" style={{ padding: '14px' }}>{caso.datos_usuario?.cedula || '-'}</td>
+                    <td className="text-gray-300 text-xs" style={{ padding: '14px' }}>{caso.datos_usuario?.telefono || '-'}</td>
+                    <td style={{ padding: '14px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.numero_cuenta || '-'}</span></td>
+                    <td style={{ padding: '14px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.ubicacion_estacion || '-'}</span></td>
+                    <td style={{ padding: '14px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.fecha_alquiler || '-'}</span></td>
+                    <td style={{ padding: '14px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.hora_alquiler || '-'}</span></td>
+                    <td style={{ padding: '14px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.referencia_bancaria || '-'}</span></td>
+                    <td style={{ padding: '14px' }}><span className="text-yellow-400 font-mono text-xs">{caso.datos_usuario?.monto_reembolso || '-'}</span></td>
+                    <td className="text-center" style={{ padding: '14px' }}>
+                      <span className={`inline-block rounded-full text-xs border font-semibold ${getEstadoColor(caso)}`} style={{ padding: '4px 12px' }}>
                         {getEstadoLabel(caso)}
                       </span>
                     </td>
-                    <td className="text-center" style={{ padding: '16px' }}>
+                    <td className="text-center" style={{ padding: '14px' }}>
                       <label className="inline-flex items-center justify-center cursor-pointer">
                         <input type="checkbox" checked={caso.atendido || false}
                           onChange={() => handleToggleAtendido(caso.id, caso.atendido || false)}
@@ -303,7 +306,7 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
                         </div>
                       </label>
                     </td>
-                    <td className="text-center" style={{ padding: '16px' }}>
+                    <td className="text-center" style={{ padding: '14px' }}>
                       <button onClick={e => { e.stopPropagation(); handleDelete(caso.id); }} disabled={deletingId === caso.id}
                         className="p-2 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30"
                         title="Eliminar caso">

@@ -361,7 +361,8 @@ export async function POST(req: NextRequest) {
       try {
         console.log('[AI] Registration confirmed, extracting user data...');
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-        const extractPrompt = `Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "...",\n  "ubicacion_estacion": "...",\n  "fecha_alquiler": "...",\n  "referencia_bancaria": "...",\n  "monto_reembolso": "..."\n}`;
+        const todayStr = new Date().toLocaleDateString('es-VE'); // Fecha actual por si dice "hoy"
+        const extractPrompt = `Extrae los datos a partir del historial. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco (""). Fecha de hoy: ${todayStr}.\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "...",\n  "ubicacion_estacion": "...",\n  "fecha_alquiler": "Convierte cualquier formato de fecha del usuario (ej: 'hoy', 'ayer', '04/08', '4 de agosto') a formato DD/MM/YYYY exacto (ej. ${todayStr})",\n  "hora_alquiler": "Extrae la hora exacta mencionada (ej. 10:00 a.m. o 02:30 p.m.)",\n  "referencia_bancaria": "...",\n  "monto_reembolso": "..."\n}`;
 
         const extRes = await callAI(extractPrompt, 0.1, true);
 
@@ -389,6 +390,7 @@ export async function POST(req: NextRequest) {
                      tipo_cuenta: userData.tipo_cuenta || '',
                      ubicacion_estacion: userData.ubicacion_estacion || '',
                      fecha_alquiler: userData.fecha_alquiler || '',
+                     hora_alquiler: userData.hora_alquiler || '',
                      referencia_bancaria: userData.referencia_bancaria || '',
                      monto_reembolso: userData.monto_reembolso || ''
                    },
