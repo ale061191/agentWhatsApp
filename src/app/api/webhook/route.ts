@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { Message } from '@/types';
 import { getFirebaseDB } from '@/lib/firebase';
 import { Database, ref, set, get, child, update, runTransaction } from 'firebase/database';
@@ -49,7 +49,7 @@ async function saveAgentMessage(db: Database, chatId: string, content: string) {
   });
 }
 
-/** Envía texto por WhatsApp vía WHAPI y devuelve si fue OK. */
+/** EnvÃ­a texto por WhatsApp vÃ­a WHAPI y devuelve si fue OK. */
 async function sendWhapi(chatId: string, text: string): Promise<boolean> {
   const res = await fetch(WHAPI_BASE_URL + '/messages/text', {
     method: 'POST',
@@ -60,7 +60,7 @@ async function sendWhapi(chatId: string, text: string): Promise<boolean> {
 }
 
 /**
- * Genera texto de IA. PRIMERO AGNES (OpenAI-compatible); si no está
+ * Genera texto de IA. PRIMERO AGNES (OpenAI-compatible); si no estÃ¡
  * configurada o falla, cae a Gemini. Devuelve '' si ambos fallan.
  */
 async function callAI(prompt: string, temperature: number, extractMode = false): Promise<string> {
@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
 
     // === 3. RESPECT AI TOGGLE ===
     if (oldChat.aiEnabled === false) {
-      console.log('[WEBHOOK] AI is DISABLED for this chat — no response sent');
+      console.log('[WEBHOOK] AI is DISABLED for this chat â€” no response sent');
       return NextResponse.json({ success: true });
     }
 
@@ -251,7 +251,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // === 5. DEBOUNCE LOCK — agrupar mensajes rápidos ===
+    // === 5. DEBOUNCE LOCK â€” agrupar mensajes rÃ¡pidos ===
     try {
       const lockRef = ref(db, 'locks/' + chatId);
       const lockResult = await runTransaction(lockRef, (currentLock: any) => {
@@ -284,10 +284,10 @@ export async function POST(req: NextRequest) {
       console.log('[LOCK] Error (likely Firebase rules), falling through to direct AI call:', e);
     }
 
-    // === 5B. MENÚ / ESTADO DE CONVERSACIÓN ===
+    // === 5B. MENÃš / ESTADO DE CONVERSACIÃ“N ===
     // El estado del flujo se persiste DENTRO de chats/{chatId}/estado (path
     // que el webhook ya usa y las reglas ya permiten), evitando depender de un
-    // path nuevo que podría estar bloqueado por las reglas de Firebase.
+    // path nuevo que podrÃ­a estar bloqueado por las reglas de Firebase.
     const chatEstRef = ref(db, 'chats/' + chatId);
     let estado: { flow?: FlowId } = {};
     try {
@@ -299,11 +299,11 @@ export async function POST(req: NextRequest) {
 
     const userText = (customMsgForAI || '').trim();
 
-    // PRIMER CONTACTO: aún no hay estado registrado → SIEMPRE mostrar el menú
-    // de bienvenida una vez, sin importar si el mensaje trae intención clara.
-    // (Decisión de Ezequiel 04/08/2026: uniformidad en el primer contacto.)
+    // PRIMER CONTACTO: aÃºn no hay estado registrado â†’ SIEMPRE mostrar el menÃº
+    // de bienvenida una vez, sin importar si el mensaje trae intenciÃ³n clara.
+    // (DecisiÃ³n de Ezequiel 04/08/2026: uniformidad en el primer contacto.)
     if (!estado.flow) {
-      console.log('[MENU] First contact — sending menu.');
+      console.log('[MENU] First contact â€” sending menu.');
       const menuText = buildMenuText();
       await sendWhapi(chatId, menuText);
       await saveAgentMessage(db, chatId, menuText);
@@ -312,7 +312,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // Detectar a qué flujo debe moverse según el mensaje del usuario.
+    // Detectar a quÃ© flujo debe moverse segÃºn el mensaje del usuario.
     const detected = detectFlow(userText);
     let activeFlow: FlowId = estado.flow || 'menu';
 
@@ -323,7 +323,7 @@ export async function POST(req: NextRequest) {
       activeFlow = 'menu';
     }
 
-    // Persistimos el flujo actual para la siguiente iteración (best-effort).
+    // Persistimos el flujo actual para la siguiente iteraciÃ³n (best-effort).
     try {
       await update(chatEstRef, { estado: { flow: activeFlow } });
     } catch (e) {
@@ -334,7 +334,7 @@ export async function POST(req: NextRequest) {
     const histSnap = await get(ref(db, 'messages/' + chatId));
     const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
 
-    // Priorizamos SIEMPRE la identidad + flujo del CÓDIGO (son la fuente de
+    // Priorizamos SIEMPRE la identidad + flujo del CÃ“DIGO (son la fuente de
     // verdad), para que la personalidad y las respuestas del CEO apliquen.
     const basePrompt = SONIA_IDENTITY;
     const flowInstructions = getFlowPrompt(activeFlow);
@@ -361,7 +361,7 @@ export async function POST(req: NextRequest) {
       try {
         console.log('[AI] Registration confirmed, extracting user data...');
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-        const extractPrompt = `Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "..."\n}`;
+        const extractPrompt = `Extrae los datos personales y bancarios del usuario a partir del siguiente historial de conversacion. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco ("").\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "...",\n  "ubicacion_estacion": "...",\n  "fecha_alquiler": "...",\n  "referencia_bancaria": "...",\n  "monto_reembolso": "..."\n}`;
 
         const extRes = await callAI(extractPrompt, 0.1, true);
 
@@ -386,14 +386,14 @@ export async function POST(req: NextRequest) {
                      cedula: userData.cedula || '',
                      telefono: userData.telefono || chatId,
                      numero_cuenta: rawAccount,
-                     tipo_cuenta: userData.tipo_cuenta || ''
+                     tipo_cuenta: userData.tipo_cuenta || '',
+                     ubicacion_estacion: userData.ubicacion_estacion || '',
+                     fecha_alquiler: userData.fecha_alquiler || '',
+                     referencia_bancaria: userData.referencia_bancaria || '',
+                     monto_reembolso: userData.monto_reembolso || ''
                    },
-                   evidencias: {
-                     captura_historial_operaciones: true,
-                     captura_billetera_app: true,
-                     captura_movimientos_bancarios: true
-                   },
-                   estado_caso: 'pendiente_validacion'
+                   estado_caso: 'pendiente_validacion',
+                   atendido: false
                 };
                 await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
                 console.log('[DB] Auto-extracted and saved caso de reembolso:', casoId);

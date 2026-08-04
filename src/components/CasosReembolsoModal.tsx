@@ -9,9 +9,19 @@ interface CasosReembolsoModalProps { isOpen: boolean; onClose: () => void; }
 interface CasoReembolso {
   id: string; caso_id?: string; fecha_primer_contacto: string; fecha_registro_caso: string;
   canal: string; agente: string;
-  datos_usuario: { nombre_completo: string; cedula: string; telefono: string; numero_cuenta: string; tipo_cuenta: string; };
-  evidencias: { captura_historial_operaciones: string; captura_billetera_app: string; captura_movimientos_bancarios: string; };
-  estado_caso: string; arreglado_sistema?: boolean; arreglado_administracion?: boolean;
+  datos_usuario: { 
+    nombre_completo: string; 
+    cedula: string; 
+    telefono: string; 
+    numero_cuenta: string; 
+    tipo_cuenta: string;
+    ubicacion_estacion?: string;
+    fecha_alquiler?: string;
+    referencia_bancaria?: string;
+    monto_reembolso?: string;
+  };
+  estado_caso: string; 
+  atendido?: boolean;
 }
 
 type DateFilter = 'all' | 'today' | 'week' | 'month' | 'custom';
@@ -46,10 +56,10 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
   useEffect(() => { loadCasos(); }, [loadCasos]);
 
   // Compute resolved status: if either checkbox is checked, it's "Solucionado"
-  const isResolved = (caso: CasoReembolso) => caso.arreglado_sistema || caso.arreglado_administracion;
+  const isResolved = (caso: CasoReembolso) => caso.atendido || caso.estado_caso === 'solucionado';
 
   const getEstadoColor = (caso: CasoReembolso) => {
-    if (isResolved(caso)) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
+    if (caso.atendido || caso.estado_caso === 'solucionado') return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40';
     switch (caso.estado_caso) {
       case 'pendiente_validacion': return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
       case 'en_validacion': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
@@ -113,22 +123,14 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
     finally { setDeletingId(null); }
   };
 
-  const handleToggleField = async (casoId: string, field: 'arreglado_sistema' | 'arreglado_administracion', currentValue: boolean) => {
+  const handleToggleAtendido = async (casoId: string, currentValue: boolean) => {
     const newValue = !currentValue;
-    setCasos(prev => prev.map(c => c.id === casoId ? { ...c, [field]: newValue } : c));
+    setCasos(prev => prev.map(c => c.id === casoId ? { ...c, atendido: newValue } : c));
     try {
-      // Also update estado_caso when resolving
-      const caso = casos.find(c => c.id === casoId);
-      const otherField = field === 'arreglado_sistema' ? 'arreglado_administracion' : 'arreglado_sistema';
-      const willBeResolved = newValue || (caso && (caso as any)[otherField]);
-      const updates: any = { [field]: newValue };
-      if (willBeResolved) updates.estado_caso = 'solucionado';
-      else if (!newValue && !(caso as any)?.[otherField]) updates.estado_caso = 'pendiente_validacion';
-
-      await fetch('/api/db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateCasoReembolso', chatId: casoId, updates }) });
+      await fetch('/api/db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateCasoReembolso', chatId: casoId, updates: { atendido: newValue } }) });
     } catch (e) {
-      console.error('Error updating caso:', e);
-      setCasos(prev => prev.map(c => c.id === casoId ? { ...c, [field]: currentValue } : c));
+      console.error('Error updating atendido:', e);
+      setCasos(prev => prev.map(c => c.id === casoId ? { ...c, atendido: currentValue } : c));
     }
   };
 
@@ -142,13 +144,12 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
       'Cédula': caso.datos_usuario?.cedula || '-',
       'Teléfono': caso.datos_usuario?.telefono || '-',
       'Cuenta': caso.datos_usuario?.numero_cuenta || '-',
-      'Tipo Cuenta': caso.datos_usuario?.tipo_cuenta || '-',
-      'Evidencia Historial': caso.evidencias?.captura_historial_operaciones ? 'Sí' : 'No',
-      'Evidencia Billetera': caso.evidencias?.captura_billetera_app ? 'Sí' : 'No',
-      'Evidencia Banco': caso.evidencias?.captura_movimientos_bancarios ? 'Sí' : 'No',
+      'Ubicación': caso.datos_usuario?.ubicacion_estacion || '-',
+      'Fecha Alquiler': caso.datos_usuario?.fecha_alquiler ? formatDate(caso.datos_usuario.fecha_alquiler) : '-',
+      'Referencia': caso.datos_usuario?.referencia_bancaria || '-',
+      'Monto': caso.datos_usuario?.monto_reembolso || '-',
       'Estado': getEstadoLabel(caso),
-      'Arreglado Sistema': caso.arreglado_sistema ? 'Sí' : 'No',
-      'Arreglado Administración': caso.arreglado_administracion ? 'Sí' : 'No',
+      'Atendido': caso.atendido ? 'Sí' : 'No',
     }));
 
     const ws = XLSX.utils.json_to_sheet(data);
@@ -260,14 +261,9 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
             <table className="w-full text-sm" style={{ borderSpacing: '0 4px', borderCollapse: 'separate' }}>
               <thead className="sticky top-0 bg-[#111317] z-10">
                 <tr>
-                  {['ID', 'FECHA', 'USUARIO', 'CÉDULA', 'TELÉFONO', 'CUENTA', 'TIPO'].map(h => (
+                  {['ID', 'FECHA', 'USUARIO', 'CÉDULA', 'TELÉFONO', 'CUENTA', 'UBICACIÓN', 'FECHA ALQUILER', 'REFERENCIA', 'MONTO', 'ESTADO', 'ATENDIDO'].map(h => (
                     <th key={h} className="text-left text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 16px' }}>{h}</th>
                   ))}
-                  <th className="text-center text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 12px' }}>EVIDENCIAS</th>
-                  <th className="text-center text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 12px' }}>ESTADO</th>
-                  <th className="text-center text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 12px', whiteSpace: 'nowrap' }}>ARR. SISTEMA</th>
-                  <th className="text-center text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 12px', whiteSpace: 'nowrap' }}>ARR. ADMIN</th>
-                  <th style={{ padding: '14px 12px', width: '50px' }}></th>
                 </tr>
               </thead>
               <tbody>
@@ -284,32 +280,22 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
                     <td className="text-gray-300 font-mono text-xs" style={{ padding: '16px' }}>{caso.datos_usuario?.cedula || '-'}</td>
                     <td className="text-gray-300 text-xs" style={{ padding: '16px' }}>{caso.datos_usuario?.telefono || '-'}</td>
                     <td style={{ padding: '16px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.numero_cuenta || '-'}</span></td>
-                    <td style={{ padding: '16px' }}>
-                      <span className={`text-xs rounded-lg ${caso.datos_usuario?.tipo_cuenta === 'Ahorro' ? 'bg-cyan-500/10 text-cyan-400' : 'bg-violet-500/10 text-violet-400'}`}
-                        style={{ padding: '4px 10px' }}>
-                        {caso.datos_usuario?.tipo_cuenta || '-'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '16px' }}>
-                      <div className="flex items-center justify-center gap-2">
-                        <span className={`w-3.5 h-3.5 rounded-full ${caso.evidencias?.captura_historial_operaciones ? 'bg-green-500' : 'bg-gray-700'}`} title="Historial App" />
-                        <span className={`w-3.5 h-3.5 rounded-full ${caso.evidencias?.captura_billetera_app ? 'bg-blue-500' : 'bg-gray-700'}`} title="Billetera App" />
-                        <span className={`w-3.5 h-3.5 rounded-full ${caso.evidencias?.captura_movimientos_bancarios ? 'bg-purple-500' : 'bg-gray-700'}`} title="Banco" />
-                      </div>
-                    </td>
+                    <td style={{ padding: '16px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.ubicacion_estacion || '-'}</span></td>
+                    <td style={{ padding: '16px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.fecha_alquiler ? formatDate(caso.datos_usuario.fecha_alquiler) : '-'}</span></td>
+                    <td style={{ padding: '16px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.referencia_bancaria || '-'}</span></td>
+                    <td style={{ padding: '16px' }}><span className="text-yellow-400 font-mono text-xs">{caso.datos_usuario?.monto_reembolso || '-'}</span></td>
                     <td className="text-center" style={{ padding: '16px' }}>
                       <span className={`inline-block rounded-full text-xs border font-semibold ${getEstadoColor(caso)}`} style={{ padding: '5px 14px' }}>
                         {getEstadoLabel(caso)}
                       </span>
                     </td>
-                    {/* Arreglado por Sistema */}
                     <td className="text-center" style={{ padding: '16px' }}>
                       <label className="inline-flex items-center justify-center cursor-pointer">
-                        <input type="checkbox" checked={caso.arreglado_sistema || false}
-                          onChange={() => handleToggleField(caso.id, 'arreglado_sistema', caso.arreglado_sistema || false)}
+                        <input type="checkbox" checked={caso.atendido || false}
+                          onChange={() => handleToggleAtendido(caso.id, caso.atendido || false)}
                           className="sr-only peer" />
                         <div className="w-[22px] h-[22px] rounded-md border-2 border-gray-600 peer-checked:border-[#25d366] peer-checked:bg-[#25d366] flex items-center justify-center transition-all cursor-pointer">
-                          {caso.arreglado_sistema && (
+                          {caso.atendido && (
                             <svg className="w-3.5 h-3.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                             </svg>
@@ -317,22 +303,6 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
                         </div>
                       </label>
                     </td>
-                    {/* Arreglado por Administración */}
-                    <td className="text-center" style={{ padding: '16px' }}>
-                      <label className="inline-flex items-center justify-center cursor-pointer">
-                        <input type="checkbox" checked={caso.arreglado_administracion || false}
-                          onChange={() => handleToggleField(caso.id, 'arreglado_administracion', caso.arreglado_administracion || false)}
-                          className="sr-only peer" />
-                        <div className="w-[22px] h-[22px] rounded-md border-2 border-gray-600 peer-checked:border-orange-400 peer-checked:bg-orange-400 flex items-center justify-center transition-all cursor-pointer">
-                          {caso.arreglado_administracion && (
-                            <svg className="w-3.5 h-3.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                            </svg>
-                          )}
-                        </div>
-                      </label>
-                    </td>
-                    {/* Delete */}
                     <td className="text-center" style={{ padding: '16px' }}>
                       <button onClick={e => { e.stopPropagation(); handleDelete(caso.id); }} disabled={deletingId === caso.id}
                         className="p-2 rounded-lg text-gray-600 hover:text-red-400 hover:bg-red-500/10 opacity-0 group-hover:opacity-100 transition-all disabled:opacity-30"
@@ -377,9 +347,7 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
             style={{ padding: '14px 28px' }}>
             <span>Mostrando {((safeCurrentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(safeCurrentPage * ITEMS_PER_PAGE, casosFiltrados.length)} de {casosFiltrados.length} casos</span>
             <div className="flex items-center gap-5">
-              <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-green-500" /> Historial</span>
-              <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> Billetera</span>
-              <span className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Banco</span>
+              <span className="flex items-center gap-2"><input type="checkbox" className="w-4 h-4 accent-[#25d366]" disabled /> Atendido</span>
             </div>
           </div>
         )}
