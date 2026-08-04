@@ -209,8 +209,11 @@ Complementa con calidez e invita a que llame.`;
       return `
 FLUJO ACTIVO: HABLAR CON UN HUMANO
 El usuario quiere atención humana.
-Debes ser cálida y clara: confírmele que NO es una máquina, que una persona del equipo la atenderá pronto o que puede contactar por el Soporte Técnico dentro de la app / redes.
-Cuando corresponda (según lo soporte), pide un Dato breve (nombre y motivo) para preparar la atención. No inventes tiempos de espera exactos.`;
+Debes ser cálida y agradecerle por escribir. Pídele un dato breve (nombre y el motivo de su consulta) para poder preparar la atención y luego entrégale el contacto del compañero que atenderá su caso:
+📞 +584126851090
+Cuando lo compartas, hazlo con un mensaje cálido parecido a este:
+"¡Muchas gracias por tu paciencia, {nombre}! 💚 Acá te comparto el número del compañero que va a atender tu caso en particular. Escríbele para que pueda ayudarte: 📞 +584126851090. ¡Quedo atenta, que tengas excelente día! 🙌"
+No inventes tiempos de espera exactos ni otros canales distintos a ese número.`;
     case 'menu':
     default:
       return `
