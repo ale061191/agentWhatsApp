@@ -251,7 +251,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // === 5. DEBOUNCE LOCK â€” agrupar mensajes rÃ¡pidos ===
+    // === 5. DEBOUNCE LOCK — agrupar mensajes rÃ¡pidos ===
+    // El usuario suele escribir en partes ("hola", "como", "estas" o
+    // "pague 1200", "porfa reembolso"). Este lock espera a que el usuario
+    // deje de escribir y responde UNA sola vez con todo el contexto junto.
     try {
       const lockRef = ref(db, 'locks/' + chatId);
       const lockResult = await runTransaction(lockRef, (currentLock: any) => {
@@ -267,9 +270,31 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ success: true });
       }
 
-      console.log('[LOCK] Lock acquired, debouncing 1500ms');
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      console.log('[LOCK] Debounce complete, processing batch');
+      console.log('[LOCK] Lock acquired, debouncing to group rapid messages');
+      const WINDOW = 3000;     // espera de silencio para agrupar
+      const MAX_TOTAL = 7000;  // tope máximo de espera entre todos los mensajes
+      const TICK = 600;        // intervalo de revisión
+      const start = Date.now();
+      let msgCount = Object.keys((await get(ref(db, 'messages/' + chatId))).val() || {}).length;
+
+      // Mantiene el lock mientras lleguen mensajes nuevos: cada vez que el
+      // usuario escribe se reinicia la espera de silencio (max MAX_MS total).
+      while (Date.now() - start < MAX_TOTAL) {
+        await new Promise(resolve => setTimeout(resolve, TICK));
+
+        let nowCount = msgCount;
+        try {
+          nowCount = Object.keys((await get(ref(db, 'messages/' + chatId))).val() || {}).length;
+        } catch (e) { /* ignore */ }
+
+        if (nowCount > msgCount) {
+          msgCount = nowCount;
+          console.log('[LOCK] New message during window â€” resetting silent timer');
+        } else if ((Date.now() - start) >= WINDOW) {
+          console.log('[LOCK] Silent window reached, processing batch');
+          break;
+        }
+      }
 
       await set(lockRef, null);
 
