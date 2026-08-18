@@ -59,6 +59,21 @@ async function sendWhapi(chatId: string, text: string): Promise<boolean> {
   return res.ok;
 }
 
+/** Construye el mensaje de corrección de cuenta según los dígitos detectados. */
+function buildCuentaCorrectionCopy(cuenta: string, nombre?: string): string {
+  const n = cuenta.replace(/\D/g, '').length;
+  const primerNombre = (nombre || '').trim().split(/\s+/)[0];
+  if (n === 0) {
+    return 'Oye, no logré identificar bien el número de cuenta que me enviaste 🙈 ¿Puedes escribirlo de nuevo? Recuerda que debe tener exactamente 20 dígitos. 💚';
+  }
+  if (n < 20) {
+    const faltan = 20 - n;
+    return `Oye ${primerNombre}, el número de cuenta que me diste tiene ${n} dígitos y le faltan ${faltan} para llegar a 20. ¿Puedes verificar el número completo y pasármelo de nuevo? 💚`;
+  }
+  const sobran = n - 20;
+  return `Oye ${primerNombre}, el número de cuenta que me diste tiene ${n} dígitos, o sea ${sobran} de más (debe tener exactamente 20). ¿Puedes verificar el número y pasármelo de nuevo? 💚`;
+}
+
 /**
  * Genera texto de IA. PRIMERO AGNES (OpenAI-compatible); si no estÃ¡
  * configurada o falla, cae a Gemini. Devuelve '' si ambos fallan.
@@ -381,51 +396,93 @@ export async function POST(req: NextRequest) {
     // === 9. Save AI response ===
     await saveAgentMessage(db, chatId, reply);
 
-    // === 10. Auto-Extraction of Refund Case ===
-    if (reply.toLowerCase().includes('tu caso ha sido registrado')) {
+    // === 10. Auto-Extraction / Auto-Save of Refund Case ===
+    // FIX (17/08/2026): disparo flexible (regex) + guard de flujo reembolso +
+    // guardado tolerante (ya no se descarta el caso si la cuenta no tiene 20 dígitos)
+    // + aviso de corrección de cuenta con conteo exacto + actualización del caso
+    // cuando el usuario corrige el número de cuenta.
+    const registrationRegex = /(?:caso|solicitud|reembolso)[^.]{0,50}registrad|registrad[^.]{0,50}(?:caso|solicitud|reembolso)/i;
+    const isRegistrationConfirmation = activeFlow === 'reembolso' && registrationRegex.test(reply);
+
+    // ¿El usuario ya envió algo que parece una cuenta bancaria (16-25 dígitos)?
+    const userRecentText = allMsgs.slice(-6).filter(m => m.sender === 'user').map(m => m.content).join(' ');
+    const userHasAccountLike = /\d{16,25}/.test(userRecentText);
+
+    // Disparamos extracción si: Sonia confirmó el caso, O el usuario ya aportó un
+    // número que parece cuenta en flujo de reembolso (captura temprana + corrección).
+    const shouldExtract = isRegistrationConfirmation || (activeFlow === 'reembolso' && userHasAccountLike);
+
+    if (shouldExtract) {
       try {
-        console.log('[AI] Registration confirmed, extracting user data...');
+        console.log('[AI] Extracting user data (confirm:', isRegistrationConfirmation, '| account-like:', userHasAccountLike, ')');
+
+        // Cargar caso existente para preservar caso_id / fecha_primer_contacto y
+        // detectar si venía pendiente de corrección.
+        let existingCaso: any = null;
+        try {
+          const existingSnap = await get(ref(db, 'casos_reembolso/' + chatId));
+          existingCaso = existingSnap.val();
+        } catch (e) {
+          console.log('[DB] No existing caso (or read failed):', e);
+        }
+        const wasPendingCorrection = !!(existingCaso && existingCaso.extraccion && existingCaso.extraccion.cuenta_pendiente_correccion);
+
         const extractRecent = allMsgs.slice(-15).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
         const todayStr = new Date().toLocaleDateString('es-VE'); // Fecha actual por si dice "hoy"
-        const extractPrompt = `Extrae los datos a partir del historial. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco (""). Fecha de hoy: ${todayStr}.\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "...",\n  "ubicacion_estacion": "...",\n  "fecha_alquiler": "Convierte cualquier formato de fecha del usuario (ej: 'hoy', 'ayer', '04/08', '4 de agosto') a formato DD/MM/YYYY exacto (ej. ${todayStr})",\n  "hora_alquiler": "Extrae la hora exacta mencionada (ej. 10:00 a.m. o 02:30 p.m.)",\n  "referencia_bancaria": "...",\n  "monto_reembolso": "..."\n}`;
+        const extractPrompt = `Extrae los datos a partir del historial. Devuelve UNICAMENTE un JSON valido sin Markdown. Si no encuentras algun dato, deja el valor en blanco (""). Fecha de hoy: ${todayStr}.\n\nHistorial:\n${extractRecent}\n\nFormato JSON esperado:\n{\n  "nombre_completo": "...",\n  "cedula": "...",\n  "telefono": "...",\n  "numero_cuenta": "...",\n  "tipo_cuenta": "...",\n  "ubicacion_estacion": "...",\n  "fecha_alquiler": "Convierte cualquier formato de fecha del usuario (ej: 'hoy', 'ayer', '04/08', '4 de agosto') a formato DD/MM/YYYY exacto (ej. ${todayStr})",\n  "hora_alquiler": "Extrae la hora exacta mencionada (ej. 10:00 a.m. o 02:30 p.m.)",\n  "referencia_bancaria": "...",\n  "monto_reembolso": "..."\n}\n\nREGLA IMPORTANTE: si el usuario mencionó varios números de cuenta, usa el ÚLTIMO que haya enviado el usuario como numero_cuenta.`;
 
+        let userData: any = null;
         const extRes = await callAI(extractPrompt, 0.1, true);
 
         if (extRes) {
-          let jsonText = extRes;
-          jsonText = jsonText.replace(/```json/gi, '').replace(/```/gi, '').trim();
+          let jsonText = extRes.replace(/```json/gi, '').replace(/```/gi, '').trim();
+          if (jsonText) {
+            try { userData = JSON.parse(jsonText); }
+            catch (e) { console.error('[DB] JSON parse failed, saving partial case:', e); }
+          }
+        }
 
-           if (jsonText) {
-              const userData = JSON.parse(jsonText);
-              const rawAccount = (userData.numero_cuenta || '').replace(/\D/g, '');
-              if (rawAccount.length !== 20) {
-                console.log('[DB] Skipping case save: account must be 20 digits, got', rawAccount.length);
-              } else {
-                const casoId = 'CASO-' + Date.now().toString().slice(-8);
-                const newCaso = {
-                   id: chatId,
-                   caso_id: casoId,
-                   fecha_primer_contacto: new Date().toISOString(),
-                   fecha_registro_caso: new Date().toISOString(),
-                   datos_usuario: {
-                     nombre_completo: userData.nombre_completo || oldChat.name || '',
-                     cedula: userData.cedula || '',
-                     telefono: userData.telefono || chatId,
-                     numero_cuenta: rawAccount,
-                     tipo_cuenta: userData.tipo_cuenta || '',
-                     ubicacion_estacion: userData.ubicacion_estacion || '',
-                     fecha_alquiler: userData.fecha_alquiler || '',
-                     hora_alquiler: userData.hora_alquiler || '',
-                     referencia_bancaria: userData.referencia_bancaria || '',
-                     monto_reembolso: userData.monto_reembolso || ''
-                   },
-                   estado_caso: 'pendiente_validacion',
-                   atendido: false
-                };
-                await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
-                console.log('[DB] Auto-extracted and saved caso de reembolso:', casoId);
-              }
+        const rawAccount = ((userData && userData.numero_cuenta) || '').replace(/\D/g, '');
+        const cuentaCompleta = rawAccount.length === 20;
+        const casoId = (existingCaso && existingCaso.caso_id) || 'CASO-' + Date.now().toString().slice(-8);
+        const ex = existingCaso && existingCaso.datos_usuario ? existingCaso.datos_usuario : {};
+
+        const newCaso = {
+           id: chatId,
+           caso_id: casoId,
+           fecha_primer_contacto: (existingCaso && existingCaso.fecha_primer_contacto) || new Date().toISOString(),
+           fecha_registro_caso: new Date().toISOString(),
+           datos_usuario: {
+             nombre_completo: (userData && userData.nombre_completo) || ex.nombre_completo || oldChat.name || '',
+             cedula: (userData && userData.cedula) || ex.cedula || '',
+             telefono: (userData && userData.telefono) || chatId,
+             numero_cuenta: rawAccount || ex.numero_cuenta || '',
+             tipo_cuenta: (userData && userData.tipo_cuenta) || ex.tipo_cuenta || '',
+             ubicacion_estacion: (userData && userData.ubicacion_estacion) || ex.ubicacion_estacion || '',
+             fecha_alquiler: (userData && userData.fecha_alquiler) || ex.fecha_alquiler || '',
+             hora_alquiler: (userData && userData.hora_alquiler) || ex.hora_alquiler || '',
+             referencia_bancaria: (userData && userData.referencia_bancaria) || ex.referencia_bancaria || '',
+             monto_reembolso: (userData && userData.monto_reembolso) || ex.monto_reembolso || ''
+           },
+           estado_caso: 'pendiente_validacion',
+           atendido: false,
+           extraccion: {
+             cuenta_completa: cuentaCompleta,
+             fallo_llm: userData ? false : true,
+             cuenta_pendiente_correccion: !cuentaCompleta && rawAccount.length > 0,
+             cuenta_actualizada: wasPendingCorrection && cuentaCompleta,
            }
+        };
+        await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
+        console.log('[DB] Caso guardado/actualizado:', casoId, '| cuenta 20 digitos:', cuentaCompleta, '| pendiente correccion:', newCaso.extraccion.cuenta_pendiente_correccion, '| actualizada:', newCaso.extraccion.cuenta_actualizada);
+
+        // Si la cuenta no está completa (y detectamos algunos dígitos), avisar al
+        // usuario con el conteo exacto para que corrija. Solo la primera vez que
+        // queda pendiente (no repetir en cada mensaje posterior).
+        if (!cuentaCompleta && rawAccount.length > 0 && !wasPendingCorrection) {
+          const copy = buildCuentaCorrectionCopy(rawAccount, newCaso.datos_usuario.nombre_completo);
+          await sendWhapi(chatId, copy);
+          await saveAgentMessage(db, chatId, copy);
         }
       } catch (err) {
         console.error('[EXTRACTION ERROR]', err);

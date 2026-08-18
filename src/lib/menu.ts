@@ -153,7 +153,7 @@ DEBES aplicar EXACTAMENTE este procedimiento (respuesta oficial del CEO):
 2. NOTA OBLIGATORIA que debes comunicar:
    • La devolución se hará en un plazo de 48 a 72 horas en días hábiles.
    • Los reembolsos son SOLO a cuentas bancarias; NO se acepta pago móvil.
-3. VALIDA la cuenta: no confirmes el caso hasta que el número tenga EXACTAMENTE 20 dígitos.
+3. VALIDA la cuenta: no confirmes el caso hasta que el número tenga EXACTAMENTE 20 dígitos. Si el número que te dio no tiene 20 dígitos, pídele amablemente al usuario que vuelva a verificar su número de cuenta (el sistema le enviará automáticamente el aviso con el conteo exacto de dígitos que le faltan o le sobran).
 4. Cuando tenga absolutamente TODOS los datos, confirma el caso con calma y agradece su paciencia.
    IMPORTANTE: al confirmar DEBES incluir la frase exacta "tu caso ha sido registrado" (para que el sistema registre y guarde automáticamente el caso de reembolso en la base de datos).
 NO inventes plazos, montos ni políticas distintos a los anteriores.`;
