@@ -5,6 +5,8 @@ import { Database, ref, set, get, child, update, runTransaction } from 'firebase
 import {
   buildMenuText,
   detectFlow,
+  detectOption1200,
+  hasVerificationData,
   getFlowPrompt,
   SONIA_IDENTITY,
   FlowId,
@@ -324,12 +326,17 @@ export async function POST(req: NextRequest) {
       console.log('[LOCK] Error (likely Firebase rules), falling through to direct AI call:', e);
     }
 
+    // === 5B. Obtener mensajes del chat para validación ===
+    // Necesitamos los mensajes para la lógica de 1200bs error
+    const histSnap = await get(ref(db, 'messages/' + chatId));
+    const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
+
     // === 5B. MENÃš / ESTADO DE CONVERSACIÃ“N ===
     // El estado del flujo se persiste DENTRO de chats/{chatId}/estado (path
     // que el webhook ya usa y las reglas ya permiten), evitando depender de un
     // path nuevo que podrÃ­a estar bloqueado por las reglas de Firebase.
     const chatEstRef = ref(db, 'chats/' + chatId);
-    let estado: { flow?: FlowId } = {};
+    let estado: { flow?: FlowId; error1200Confirmed?: boolean; optionChosen?: string; verificationSent?: boolean; cuponSent?: boolean; waitingFor?: string; prevUserData?: any; verificationRequested?: boolean } = {};
     try {
       const chatSnap2 = await get(chatEstRef);
       estado = chatSnap2.val()?.estado || {};
@@ -363,6 +370,321 @@ export async function POST(req: NextRequest) {
       activeFlow = 'menu';
     }
 
+    // === LÓGICA ESPECIAL PARA FLUJO DE 1200BS (cupón CHARGE_GO) ===
+    // Este flujo requiere interacción paso a paso, no solo el prompt de IA
+    if (activeFlow === 'reembolso_1200_error') {
+      // Cargar el estado extendido del chat (donde guardamos datos temporales)
+      let chatEstado: any = {};
+      try {
+        const estSnap = await get(chatEstRef);
+        chatEstado = estSnap.val()?.estado || {};
+      } catch (e) {
+        console.log('[1200_ERROR] Error reading estado:', e);
+      }
+
+      // Paso 1: ¿El usuario ya confirmó que fue error?
+      if (!chatEstado.error1200Confirmed) {
+        // Primera vez en este flujo: preguntar confirmación
+        const confirmationText = 'Ok, los 1200bs que transferiste para hacer uso del servicio del alquiler power bank fueron por error, ¿cierto?';
+        console.log('[1200_ERROR] Asking confirmation');
+        await sendWhapi(chatId, confirmationText);
+        await saveAgentMessage(db, chatId, confirmationText);
+        
+        // Guardar que estamos esperando confirmación
+        try {
+          await update(chatEstRef, { 
+            estado: { 
+              flow: 'reembolso_1200_error',
+              error1200Confirmed: null,  // null = esperando confirmación
+              waitingFor: 'error_confirmation'
+            } 
+          });
+        } catch (e) {
+          console.log('[1200_ERROR] persist state failed:', e);
+        }
+        
+        return NextResponse.json({ success: true });
+      }
+
+      // Paso 2: ¿El usuario ya eligió opción (reembolso o cupón)?
+      if (!chatEstado.optionChosen) {
+        // El usuario confirmó que fue error, ahora ofrecer opciones
+        const optionText = 'Tenemos 2 opciones disponibles:\n' +
+          'a) Te reembolsamos los 1200bs que transferiste por error.\n' +
+          'b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible llamado CHARGE_GO, el cual ingresas en la app y te permite escanear, expulsar el power bank y hacer uso durante 30 minutos.\n' +
+          '¿Qué prefieres?';
+        console.log('[1200_ERROR] Offering options');
+        await sendWhapi(chatId, optionText);
+        await saveAgentMessage(db, chatId, optionText);
+        
+        try {
+          await update(chatEstRef, { 
+            estado: { 
+              flow: 'reembolso_1200_error',
+              error1200Confirmed: true,
+              waitingFor: 'option_choice'
+            } 
+          });
+        } catch (e) {
+          console.log('[1200_ERROR] persist state failed:', e);
+        }
+        
+        return NextResponse.json({ success: true });
+      }
+
+      // Paso 3: ¿El usuario eligió cupón y ya envió datos de verificación?
+      if (chatEstado.optionChosen === 'cupon' && !chatEstado.verificationSent) {
+        // El usuario eligió cupón, pedir verificación
+        const verificationText = 'Para activar tu cupón CHARGE_GO, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia.';
+        console.log('[1200_ERROR] Requesting verification for cupon');
+        await sendWhapi(chatId, verificationText);
+        await saveAgentMessage(db, chatId, verificationText);
+        
+        try {
+          await update(chatEstRef, { 
+            estado: { 
+              flow: 'reembolso_1200_error',
+              error1200Confirmed: true,
+              optionChosen: 'cupon',
+              waitingFor: 'verification_data'
+            } 
+          });
+        } catch (e) {
+          console.log('[1200_ERROR] persist state failed:', e);
+        }
+        
+        return NextResponse.json({ success: true });
+      }
+
+      // Paso 4: ¿El usuario eligió cupón, envió datos de verificación y ya validamos?
+      if (chatEstado.optionChosen === 'cupon' && chatEstado.verificationSent && !chatEstado.cuponSent) {
+        // Validar que el usuario envió referencia, monto y captura
+        const lastUserMsgs = allMsgs.filter(m => m.sender === 'user').slice(-3);
+        const lastMsg = lastUserMsgs[lastUserMsgs.length - 1];
+        
+        if (lastMsg && lastMsg.content) {
+          const verification = hasVerificationData(lastMsg.content);
+          
+          // Verificar si tenemos datos previos guardados
+          const prevData = chatEstado.prevUserData || {};
+          const hasPrevReference = prevData.referencia && prevData.referencia.length > 0;
+          const prevMonto = prevData.monto || '';
+          
+          // Extraer datos del mensaje actual
+          const msgText = lastMsg.content.toLowerCase();
+          const msgHasReference = verification.hasReference || /[a-zA-Z0-9]{8,20}/.test(msgText);
+          const msgHasMonto = verification.hasMonto || /(1200|1\.200|mil doscientos)/i.test(msgText);
+          const msgHasCaptura = verification.hasCaptura || lastMsg.content.includes('[Imagen]');
+          
+          console.log('[1200_ERROR] Verification check - ref:', msgHasReference, 'monto:', msgHasMonto, 'captura:', msgHasCaptura);
+          
+          // Si tenemos referencia, monto y captura (o imagen)
+          if ((msgHasReference || hasPrevReference) && msgHasMonto && (msgHasCaptura || lastMsg.content.includes('[Imagen]'))) {
+            // Enviar código del cupón
+            const cuponCodeText = '¡Listo! Tu cupón CHARGE_GO está activo. Para usarlo en la app de Voltaje Plus: 1) Ingresa a la app, 2) Ve al ícono de menú en la esquina superior izquierda, 3) Selecciona \'Cupones\', 4) Haz click en \'Agregar código promocional\', 5) Ingresa CHARGE_GO. ¡Listo para usar! 💚';
+            console.log('[1200_ERROR] Sending cupon code');
+            await sendWhapi(chatId, cuponCodeText);
+            await saveAgentMessage(db, chatId, cuponCodeText);
+            
+            try {
+              await update(chatEstRef, { 
+                estado: { 
+                  flow: 'reembolso_1200_error',
+                  error1200Confirmed: true,
+                  optionChosen: 'cupon',
+                  verificationSent: true,
+                  cuponSent: true,
+                  waitingFor: null
+                } 
+              });
+            } catch (e) {
+              console.log('[1200_ERROR] persist state failed:', e);
+            }
+            
+            return NextResponse.json({ success: true });
+          } else {
+            // Datos incompletos, pedir lo que falta
+            let missingText = 'Por favor, necesito que me envíes:';
+            const missing: string[] = [];
+            if (!msgHasReference && !hasPrevReference) missing.push('número de referencia');
+            if (!msgHasMonto) missing.push('monto exacto (1200 Bs)');
+            if (!msgHasCaptura && !lastMsg.content.includes('[Imagen]')) missing.push('captura de la transferencia');
+            missingText += '\n- ' + missing.join('\n- ');
+            
+            console.log('[1200_ERROR] Missing verification data');
+            await sendWhapi(chatId, missingText);
+            await saveAgentMessage(db, chatId, missingText);
+            return NextResponse.json({ success: true });
+          }
+        }
+      }
+    }
+
+    // === LÓGICA ESPECIAL PARA MANEJO DE CONFIRMACIÓN DE ERROR 1200BS ===
+    // Si estamos en flujo reembolso_1200_error y el usuario responde, actualizar estado
+    if (estado.flow === 'reembolso_1200_error' && !estado.error1200Confirmed) {
+      // El usuario respondió a la pregunta de confirmación
+      const userConfirmation = userText.toLowerCase();
+      const isConfirmed = /(sí|si|sip|claro|correcto|cierto|ajá|ah sí|sí, fue error|sí, por error)/.test(userConfirmation);
+      const isDenied = /(no|no fue|no es|no lo fue|no es así)/.test(userConfirmation);
+      
+      if (isConfirmed) {
+        // Marcar como confirmado y cambiar a espera de opción
+        console.log('[1200_ERROR] User confirmed error');
+        try {
+          await update(chatEstRef, { 
+            estado: { 
+              flow: 'reembolso_1200_error',
+              error1200Confirmed: true,
+              waitingFor: 'option_choice'
+            } 
+          });
+        } catch (e) {
+          console.log('[1200_ERROR] persist state failed:', e);
+        }
+        
+        // No enviar respuesta aún, el siguiente mensaje manejará las opciones
+        // Pero si no hay más lógica, enviar las opciones ahora
+        const optionText = 'Tenemos 2 opciones disponibles:\n' +
+          'a) Te reembolsamos los 1200bs que transferiste por error.\n' +
+          'b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible llamado CHARGE_GO, el cual ingresas en la app y te permite escanear, expulsar el power bank y hacer uso durante 30 minutos.\n' +
+          '¿Qué prefieres?';
+        await sendWhapi(chatId, optionText);
+        await saveAgentMessage(db, chatId, optionText);
+        return NextResponse.json({ success: true });
+      } else if (isDenied) {
+        // No fue error, volver a menú
+        console.log('[1200_ERROR] User denied error');
+        const menuText = buildMenuText();
+        await sendWhapi(chatId, menuText);
+        await saveAgentMessage(db, chatId, menuText);
+        try {
+          await update(chatEstRef, { 
+            estado: { 
+              flow: 'menu',
+              error1200Confirmed: false,
+              optionChosen: null,
+              waitingFor: null
+            } 
+          });
+        } catch (e) {
+          console.log('[1200_ERROR] persist state failed:', e);
+        }
+        return NextResponse.json({ success: true });
+      }
+    }
+
+    // === LÓGICA ESPECIAL PARA DETECCIÓN DE OPCIÓN (reembolso o cupón) ===
+    if (estado.flow === 'reembolso_1200_error' && estado.error1200Confirmed && !estado.optionChosen) {
+      // El usuario elige entre reembolso o cupón
+      const userChoice = detectOption1200(userText);
+      
+      if (userChoice) {
+        console.log('[1200_ERROR] User chose option:', userChoice);
+        
+        if (userChoice === 'reembolso') {
+          // El usuario eligió reembolso, activar flujo normal de reembolso
+          try {
+            await update(chatEstRef, { 
+              estado: { 
+                flow: 'reembolso',
+                error1200Confirmed: true,
+                optionChosen: 'reembolso',
+                waitingFor: null
+              } 
+            });
+          } catch (e) {
+            console.log('[1200_ERROR] persist state failed:', e);
+          }
+          
+          // Dejar que el flujo normal de reembolso continúe
+          activeFlow = 'reembolso';
+          
+        } else if (userChoice === 'cupon') {
+          // El usuario eligió cupón, ahora pedir datos
+          try {
+            await update(chatEstRef, { 
+              estado: { 
+                flow: 'reembolso_1200_error',
+                error1200Confirmed: true,
+                optionChosen: 'cupon',
+                waitingFor: 'user_data'
+              } 
+            });
+          } catch (e) {
+            console.log('[1200_ERROR] persist state failed:', e);
+          }
+          
+          // Pedir datos del usuario para el cupón
+          const dataText = 'Para procesar tu cupón CHARGE_GO, necesito tus datos:\n' +
+            '- Nombre completo\n' +
+            '- Cédula de identidad\n' +
+            '- Teléfono\n' +
+            '- Cuenta bancaria (20 dígitos)\n' +
+            '- Banco\n' +
+            '- Ubicación de la estación\n' +
+            '- Fecha y hora de la transferencia\n' +
+            '- Número de referencia bancaria\n' +
+            '¡Quedo atenta! 💚';
+          await sendWhapi(chatId, dataText);
+          await saveAgentMessage(db, chatId, dataText);
+          return NextResponse.json({ success: true });
+        }
+        
+        // Persistir el flujo
+        try {
+          await update(chatEstRef, { estado: { flow: activeFlow } });
+        } catch (e) {
+          console.log('[MENU] persist flow failed:', e);
+        }
+      }
+    }
+
+    // === LÓGICA ESPECIAL: Si usuario eligió cupón y está enviando datos ===
+    if (estado.flow === 'reembolso_1200_error' && estado.optionChosen === 'cupon' && 
+        estado.waitingFor === 'user_data' && !estado.verificationRequested) {
+      // El usuario está enviando sus datos para el cupón
+      // Verificar si el mensaje contiene datos de usuario
+      const hasUserData = /(nombre|cedula|tel[ée]fono|c[úu]enta|banco|ubicaci[óo]n|fecha|hora|referencia)/i.test(userText);
+      
+      if (hasUserData) {
+        // Guardar datos temporalmente y pedir verificación
+        console.log('[1200_ERROR] User data received, requesting verification');
+        
+        // Extraer datos básicos del mensaje
+        const msgText = userText;
+        const extractedData: any = {};
+        
+        // Intentar extraer datos simples
+        const montoMatch = msgText.match(/(\d{1,4}[.,]?\d{0,3})[\s]*(?:bs|bolivares|bss)/i);
+        if (montoMatch) {
+          extractedData.monto = montoMatch[1].replace('.', '');
+        }
+        
+        // Guardar datos extraídos temporalmente
+        try {
+          await update(chatEstRef, { 
+            estado: { 
+              flow: 'reembolso_1200_error',
+              error1200Confirmed: true,
+              optionChosen: 'cupon',
+              waitingFor: 'verification_data',
+              prevUserData: extractedData,
+              verificationRequested: true
+            } 
+          });
+        } catch (e) {
+          console.log('[1200_ERROR] persist state failed:', e);
+        }
+        
+        // Pedir verificación
+        const verificationText = 'Para activar tu cupón CHARGE_GO, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia.';
+        await sendWhapi(chatId, verificationText);
+        await saveAgentMessage(db, chatId, verificationText);
+        return NextResponse.json({ success: true });
+      }
+    }
+
     // Persistimos el flujo actual para la siguiente iteraciÃ³n (best-effort).
     try {
       await update(chatEstRef, { estado: { flow: activeFlow } });
@@ -371,8 +693,7 @@ export async function POST(req: NextRequest) {
     }
 
     // === 7. Generate AI response ===
-    const histSnap = await get(ref(db, 'messages/' + chatId));
-    const allMsgs = Object.values(histSnap.val() || {}).sort((a: any, b: any) => a.timestamp - b.timestamp) as Message[];
+    // Reutilizamos allMsgs ya obtenido más arriba
 
     // Priorizamos SIEMPRE la identidad + flujo del CÃ“DIGO (son la fuente de
     // verdad), para que la personalidad y las respuestas del CEO apliquen.
@@ -410,7 +731,10 @@ export async function POST(req: NextRequest) {
 
     // Disparamos extracción si: Sonia confirmó el caso, O el usuario ya aportó un
     // número que parece cuenta en flujo de reembolso (captura temprana + corrección).
-    const shouldExtract = isRegistrationConfirmation || (activeFlow === 'reembolso' && userHasAccountLike);
+    // También extraer para flujo de 1200bs (tanto reembolso como cupón)
+    const shouldExtract = isRegistrationConfirmation || 
+                         (activeFlow === 'reembolso' && userHasAccountLike) ||
+                         (estado.flow === 'reembolso_1200_error' && estado.optionChosen);
 
     if (shouldExtract) {
       try {
@@ -447,6 +771,13 @@ export async function POST(req: NextRequest) {
         const casoId = (existingCaso && existingCaso.caso_id) || 'CASO-' + Date.now().toString().slice(-8);
         const ex = existingCaso && existingCaso.datos_usuario ? existingCaso.datos_usuario : {};
 
+        // Determinar si es caso de cupón CHARGE_GO
+        const isCuponCase = estado.flow === 'reembolso_1200_error' && estado.optionChosen === 'cupon';
+        const observaciones = isCuponCase ? 'cupón CHARGE_GO' : '';
+        
+        // Para caso de cupón, el monto es siempre 1200 Bs
+        const finalMonto = isCuponCase ? '1200' : (userData && userData.monto_reembolso) || ex.monto_reembolso || '';
+
         const newCaso = {
            id: chatId,
            caso_id: casoId,
@@ -462,15 +793,17 @@ export async function POST(req: NextRequest) {
              fecha_alquiler: (userData && userData.fecha_alquiler) || ex.fecha_alquiler || '',
              hora_alquiler: (userData && userData.hora_alquiler) || ex.hora_alquiler || '',
              referencia_bancaria: (userData && userData.referencia_bancaria) || ex.referencia_bancaria || '',
-             monto_reembolso: (userData && userData.monto_reembolso) || ex.monto_reembolso || ''
+             monto_reembolso: finalMonto
            },
            estado_caso: 'pendiente_validacion',
            atendido: false,
+           observaciones: observaciones,
            extraccion: {
              cuenta_completa: cuentaCompleta,
              fallo_llm: userData ? false : true,
              cuenta_pendiente_correccion: !cuentaCompleta && rawAccount.length > 0,
              cuenta_actualizada: wasPendingCorrection && cuentaCompleta,
+             tipo_caso: isCuponCase ? 'cupon_charge_go' : 'reembolso'
            }
         };
         await set(ref(db, 'casos_reembolso/' + chatId), newCaso);

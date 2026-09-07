@@ -23,6 +23,7 @@ interface CasoReembolso {
   };
   estado_caso: string; 
   atendido?: boolean;
+  observaciones?: string;
 }
 
 type DateFilter = 'all' | 'today' | 'week' | 'month' | 'custom';
@@ -104,7 +105,10 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
 
   const casosFiltrados = casos.filter(filterByDate).filter(caso =>
     caso.datos_usuario?.nombre_completo?.toLowerCase().includes(filtro.toLowerCase()) ||
-    caso.datos_usuario?.cedula?.includes(filtro) || caso.id.includes(filtro) || caso.caso_id?.includes(filtro)
+    caso.datos_usuario?.cedula?.includes(filtro) || 
+    caso.id.includes(filtro) || 
+    caso.caso_id?.includes(filtro) ||
+    (caso.observaciones?.toLowerCase().includes(filtro.toLowerCase()) || false)
   );
 
   const totalPages = Math.max(1, Math.ceil(casosFiltrados.length / ITEMS_PER_PAGE));
@@ -150,6 +154,7 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
       'Hora Alquiler': caso.datos_usuario?.hora_alquiler || '-',
       'Referencia': caso.datos_usuario?.referencia_bancaria || '-',
       'Monto': caso.datos_usuario?.monto_reembolso || '-',
+      'Observaciones': caso.observaciones || '-',
       'Estado': getEstadoLabel(caso),
       'Atendido': caso.atendido ? 'Sí' : 'No',
     }));
@@ -263,7 +268,7 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
             <table className="w-full text-sm" style={{ borderSpacing: '0 4px', borderCollapse: 'separate' }}>
               <thead className="sticky top-0 bg-[#111317] z-10">
                 <tr>
-                  {['ID', 'FECHA', 'USUARIO', 'CÉDULA', 'TELÉFONO', 'CUENTA', 'UBICACIÓN', 'FECHA ALQ.', 'HORA ALQ.', 'REFERENCIA', 'MONTO', 'ESTADO', 'ATENDIDO'].map(h => (
+                  {['ID', 'FECHA', 'USUARIO', 'CÉDULA', 'TELÉFONO', 'CUENTA', 'UBICACIÓN', 'FECHA ALQ.', 'HORA ALQ.', 'REFERENCIA', 'MONTO', 'OBSERVACIONES', 'ESTADO', 'ATENDIDO'].map(h => (
                     <th key={h} className="text-left text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 14px' }}>{h}</th>
                   ))}
                 </tr>
@@ -287,6 +292,9 @@ export default function CasosReembolsoModal({ isOpen, onClose }: CasosReembolsoM
                     <td style={{ padding: '14px' }}><span className="text-gray-300 text-xs">{caso.datos_usuario?.hora_alquiler || '-'}</span></td>
                     <td style={{ padding: '14px' }}><span className="text-gray-300 font-mono text-xs">{caso.datos_usuario?.referencia_bancaria || '-'}</span></td>
                     <td style={{ padding: '14px' }}><span className="text-yellow-400 font-mono text-xs">{caso.datos_usuario?.monto_reembolso || '-'}</span></td>
+                    <td style={{ padding: '14px' }}>
+                      <span className="text-white text-xs">{caso.observaciones || '-'}</span>
+                    </td>
                     <td className="text-center" style={{ padding: '14px' }}>
                       <span className={`inline-block rounded-full text-xs border font-semibold ${getEstadoColor(caso)}`} style={{ padding: '4px 12px' }}>
                         {getEstadoLabel(caso)}

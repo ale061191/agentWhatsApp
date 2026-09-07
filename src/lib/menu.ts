@@ -17,6 +17,8 @@
 export type FlowId =
   | 'menu'
   | 'reembolso'
+  | 'reembolso_1200_error'
+  | 'reembolso_cupon_charge_go'
   | 'retiro'
   | 'como_usar'
   | 'soporte'
@@ -41,7 +43,7 @@ export const MENU_OPTIONS: MenuOption[] = [
     number: 1,
     emoji: '💸',
     title: 'Reembolso — quiero recuperar mi dinero',
-    keywords: ['reembolso', 'rembolso', 'devolucion', 'devolución', 'recuperar mi dinero', 'no carga', 'no cargo', 'no trabaja', 'no me deja', 'cobro doble', 'perdio mi dinero', 'dinero', '1200', '1.200'],
+    keywords: ['reembolso', 'rembolso', 'devolucion', 'devolución', 'recuperar mi dinero', 'no carga', 'no cargo', 'no trabaja', 'no me deja', 'cobro doble', 'perdio mi dinero', 'dinero'],
   },
   {
     id: 'retiro',
@@ -120,7 +122,39 @@ export function detectFlow(input: string): FlowId | null {
     return 'menu';
   }
 
-  // 3) Coincidencia por keywords
+  // 3) DETECCIÓN ESPECIAL: 1200bs en contexto de transferencia errónea
+  // Patrones: "1200 bs", "1.200 bs", "mil doscientos", transferencia, error, equivocado
+  const monto1200Patterns = [
+    '1200bs', '1.200bs', '1200 bs', '1.200 bs',
+    'mil doscientos', 'mil y doscientos',
+    '1200bolivares', '1.200bolivares',
+    'cobro doble',
+    'equivoque con los 1200'
+  ];
+  const errorPatterns = [
+    'error', 'equivocado', 'equivoc', 'me equivoque',
+    'por error', 'fue error', 'hice error',
+    'creia que era', 'crei que era', 'pensé que era',
+    'confundi', 'transferi mal',
+    'no era', 'no es',
+    'me pasé', 'me equivoqué'
+  ];
+  const transferPatterns = [
+    'transferi', 'transferencia', 'transfiere',
+    'pague', 'pag', 'deposite', 'depósito',
+    'ingrese', 'envie'
+  ];
+
+  const hasMonto1200 = monto1200Patterns.some(p => text.includes(p));
+  const hasError = errorPatterns.some(p => text.includes(p));
+  const hasTransfer = transferPatterns.some(p => text.includes(p));
+
+  // Si detecta 1200bs + (error o transferencia), activa flujo especial
+  if (hasMonto1200 && (hasError || hasTransfer)) {
+    return 'reembolso_1200_error';
+  }
+
+  // 4) Coincidencia por keywords del menú
   for (const entry of menuKeywords) {
     for (const kw of entry.keywords) {
       if (text.includes(kw)) return entry.id;
@@ -129,6 +163,54 @@ export function detectFlow(input: string): FlowId | null {
 
   // default: sin coincidencia → null (el webhook conserva el flujo actual)
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// DETECCIÓN DE ELECCIÓN DE OPCIÓN EN FLUJO 1200BS
+// ---------------------------------------------------------------------------
+export function detectOption1200(input: string): 'reembolso' | 'cupon' | null {
+  const text = (input || '').toLowerCase().trim();
+  
+  // Opción A: Reembolso
+  const reembolsoPatterns = [
+    'reembolso', 'reembolsar', 'devolver', 'devolucion', 'devolución',
+    'que me devuelvan', 'quiero mi dinero', 'recuperar el dinero',
+    'opcion a', 'opción a', 'la a', 'opcion 1', 'opción 1'
+  ];
+  
+  // Opción B: Cupón
+  const cuponPatterns = [
+    'cupon', 'cupón', 'código', 'promocional', 'promo',
+    'charge_go', 'charge go', 'CHARGE_GO',
+    'opcion b', 'opción b', 'la b', 'opcion 2', 'opción 2',
+    'usar el power', 'hacer uso', 'alquilar', 'escane',
+    'prefiero el cupon', 'quiero el cupon', 'me interesa el cupon'
+  ];
+  
+  if (reembolsoPatterns.some(p => text.includes(p))) {
+    return 'reembolso';
+  }
+  
+  if (cuponPatterns.some(p => text.includes(p))) {
+    return 'cupon';
+  }
+  
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// DETECCIÓN DE DATOS DE VERIFICACIÓN PARA CUPÓN (referencia + monto + captura)
+// ---------------------------------------------------------------------------
+export function hasVerificationData(input: string): { hasReference: boolean; hasMonto: boolean; hasCaptura: boolean } {
+  const text = (input || '').toLowerCase().trim();
+  
+  const hasReference = /(referencia|n[úu]mero de referencia|ref\.?|n[úu]m\.? ref)/i.test(text) || 
+                       /[a-zA-Z0-9]{8,20}/.test(text); // referencia típica
+  const hasMonto = /(1200|1\.200|mil doscientos)/i.test(text);
+  const hasCaptura = /(captura|pantallazo|foto|imagen|comprobante)/i.test(text) || 
+                    text.includes('[imagen]');
+  
+  return { hasReference, hasMonto, hasCaptura };
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +239,45 @@ DEBES aplicar EXACTAMENTE este procedimiento (respuesta oficial del CEO):
 4. Cuando tenga absolutamente TODOS los datos, confirma el caso con calma y agradece su paciencia.
    IMPORTANTE: al confirmar DEBES incluir la frase exacta "tu caso ha sido registrado" (para que el sistema registre y guarde automáticamente el caso de reembolso en la base de datos).
 NO inventes plazos, montos ni políticas distintos a los anteriores.`;
+
+    case 'reembolso_1200_error':
+      return `FLUJO ACTIVO: REEMBOLSO POR ERROR DE 1200BS
+El usuario menciona que transfirió 1200 Bs por error, creyendo que era el costo del alquiler.
+DEBES seguir este procedimiento EXACTO:
+1. Primero VERIFICA que realmente fue un error. Pregunta: "Ok, los 1200bs que transferiste para hacer uso del servicio del alquiler power bank fueron por error, ¿cierto?"
+2. Si el usuario CONFIRMA que fue por error:
+   - Ofrece las 2 opciones disponibles de forma clara:
+   "Tenemos 2 opciones disponibles:
+   a) Te reembolsamos los 1200bs que transferiste por error.
+   b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible llamado CHARGE_GO, el cual ingresas en la app y te permite escanear, expulsar el power bank y hacer uso durante 30 minutos.
+   ¿Qué prefieres?"
+3. Si el usuario elige REEMBOLSO (opción a):
+   - CAPTURA TODOS sus datos como en el flujo normal de reembolso (nombre, cédula, teléfono, cuenta bancaria 20 dígitos, banco, ubicación, fecha, hora, referencia, monto=1200bs).
+   - Al confirmar, DEBES incluir la frase exacta "tu caso ha sido registrado" para que el sistema guarde el caso.
+   - NO mencionar el cupón nuevamente.
+4. Si el usuario elige CUPÓN (opción b):
+   - CAPTURA TODOS sus datos igual que en reembolso (nombre, cédula, teléfono, cuenta bancaria, banco, ubicación, fecha, hora, referencia, monto=1200bs).
+   - ANTES de enviar el código del cupón, DEBES solicitar verificación:
+     "Para activar tu cupón CHARGE_GO, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia."
+   - UNA VEZ QUE RECIBAS estos 3 datos (referencia, monto, captura), VALIDA que el número de referencia y monto coincidan con los datos previos que ya capturaste.
+   - Solo entonces responde: "¡Listo! Tu cupón CHARGE_GO está activo. Para usarlo en la app de Voltaje Plus: 1) Ingresa a la app, 2) Ve al ícono de menú en la esquina superior izquierda, 3) Selecciona 'Cupones', 4) Haz click en 'Agregar código promocional', 5) Ingresa CHARGE_GO. ¡Listo para usar! 💚"
+5. Si el usuario pregunta cómo se usa el cupón o dónde se coloca:
+   - Explica los 5 pasos: "1. Ingresas en la app de Voltaje, 2. Ve al ícono en la esquina superior izquierda de un menú, 3. Ahí verás la opción 'cupones', ingresas a esa sección, 4. Vas a ver algo que dice 'agregar código promocional', 5. Haz click ahí en 'agregar código promocional' e ingresas CHARGE_GO"
+6. IMPORTANTE: En el caso de cupón, el sistema guardará automáticamente la observación "cupón CHARGE_GO" en el caso.
+NO inventes otras opciones ni ofrezcas alternativas no autorizadas.`;
+
+    case 'reembolso_cupon_charge_go':
+      return `FLUJO ACTIVO: REEMBOLSO CUPÓN CHARGE_GO (validación pendiente)
+El usuario eligió el cupón CHARGE_GO. DEBES:
+1. Esperar a que el usuario envíe: número de referencia, monto y captura de la transferencia.
+2. Una vez recibidos, VALIDAR que:
+   - El número de referencia COINCIDA con el que ya tenías guardado
+   - El monto sea EXACTAMENTE 1200 Bs
+   - La captura sea legible
+3. Si TODO está correcto, enviar el código: "¡Listo! Tu cupón CHARGE_GO está activo. Para usarlo en la app de Voltaje Plus: 1) Ingresa a la app, 2) Ve al ícono de menú en la esquina superior izquierda, 3) Selecciona 'Cupones', 4) Haz click en 'Agregar código promocional', 5) Ingresa CHARGE_GO. ¡Listo para usar! 💚"
+4. Si el usuario pregunta cómo usar el cupón, repetir los 5 pasos.
+5. El sistema guardará automáticamente la observación "cupón CHARGE_GO" en el caso.
+NO enviar el código sin validar los 3 datos (referencia + monto + captura).`;
     case 'retiro':
       return `
 FLUJO ACTIVO: RETIRO DE SALDO / WALLET
