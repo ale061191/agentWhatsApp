@@ -122,8 +122,10 @@ export function detectFlow(input: string): FlowId | null {
     return 'menu';
   }
 
-  // 3) DETECCIÓN ESPECIAL: 1200bs en contexto de transferencia errónea
-  // Patrones: "1200 bs", "1.200 bs", "mil doscientos", transferencia, error, equivocado
+  // 3) DETECCIÓN ESPECIAL: 1200bs en contexto de reembolso o transferencia
+  // CONTEXTO: 1200 Bs NO es un depósito válido (son 12000 o 6000 Bs), pero SÍ es el costo de renta por 30min.
+  // Cuando un usuario pide reembolso por 1200 Bs, casi siempre es por error al confundir
+  // el costo de renta con el depósito de garantía. Sonia DEBE detectar esto.
   const monto1200Patterns = [
     '1200bs', '1.200bs', '1200 bs', '1.200 bs',
     'mil doscientos', 'mil y doscientos',
@@ -150,17 +152,22 @@ export function detectFlow(input: string): FlowId | null {
     'pague', 'pag', 'deposite', 'depósito', 'deposito',
     'ingrese', 'envie', 'pase'
   ];
+  // Patrones de reembolso (para detectar cuando el usuario pide reembolso + 1200bs)
+  const reembolsoPatterns = [
+    'reembolso', 'reembolsar', 'devolver', 'devolucion', 'devolución',
+    'recuperar mi dinero', 'recuperar el dinero', 'quiero mi dinero'
+  ];
 
   const hasMonto1200 = monto1200Patterns.some(p => text.includes(p));
   const hasError = errorPatterns.some(p => text.includes(p));
   const hasTransfer = transferPatterns.some(p => text.includes(p));
+  const hasReembolso = reembolsoPatterns.some(p => text.includes(p));
 
-  // Si detecta 1200bs + (error o transferencia), activa flujo especial
-  // PRIORIDAD: este flujo debe activarse ANTES que el flujo normal de reembolso
-  if (hasMonto1200 && hasTransfer) {
-    return 'reembolso_1200_error';
-  }
-  if (hasMonto1200 && hasError) {
+  // Si detecta 1200bs + (error O transferencia O reembolso), activa flujo especial
+  // CONTEXTO BUSINESS: Cuando un usuario menciona 1200 Bs en un contexto de reembolso,
+  // es MUY PROBABLE que sea por error (confundió costo de renta con depósito de garantía).
+  // PRIORIDAD MÁXIMA: este flujo debe activarse ANTES que el flujo normal de reembolso.
+  if (hasMonto1200 && (hasError || hasTransfer || hasReembolso)) {
     return 'reembolso_1200_error';
   }
 
