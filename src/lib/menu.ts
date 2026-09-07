@@ -134,15 +134,21 @@ export function detectFlow(input: string): FlowId | null {
   const errorPatterns = [
     'error', 'equivocado', 'equivoc', 'me equivoque',
     'por error', 'fue error', 'hice error',
-    'creia que era', 'crei que era', 'pensé que era',
+    'creia que era', 'crei que era', 'pensé que era', '料 que era',
     'confundi', 'transferi mal',
-    'no era', 'no es',
-    'me pasé', 'me equivoqué'
+    'no era', 'no es', 'no son',
+    'me pasé', 'me equivoqué',
+    // Patrones de corrección: "y eran X", "debían ser X", "tenía que ser X", "y son X"
+    'y eran', 'y eran ', ' eran ', 'y son', 'y son ', ' son ',
+    'debían ser', 'debian ser', 'tenía que ser', 'tenia que ser', 'tenían que ser', 'tenian que ser',
+    'y no eran', 'y no son',
+    // Patrones de monto correcto
+    '12000', '12.000', 'doce mil', '12 mil'
   ];
   const transferPatterns = [
     'transferi', 'transferencia', 'transfiere',
-    'pague', 'pag', 'deposite', 'depósito',
-    'ingrese', 'envie'
+    'pague', 'pag', 'deposite', 'depósito', 'deposito',
+    'ingrese', 'envie', 'pase'
   ];
 
   const hasMonto1200 = monto1200Patterns.some(p => text.includes(p));
@@ -150,7 +156,11 @@ export function detectFlow(input: string): FlowId | null {
   const hasTransfer = transferPatterns.some(p => text.includes(p));
 
   // Si detecta 1200bs + (error o transferencia), activa flujo especial
-  if (hasMonto1200 && (hasError || hasTransfer)) {
+  // PRIORIDAD: este flujo debe activarse ANTES que el flujo normal de reembolso
+  if (hasMonto1200 && hasTransfer) {
+    return 'reembolso_1200_error';
+  }
+  if (hasMonto1200 && hasError) {
     return 'reembolso_1200_error';
   }
 
