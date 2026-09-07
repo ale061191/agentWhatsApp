@@ -409,9 +409,10 @@ export async function POST(req: NextRequest) {
       // Paso 2: ¿El usuario ya eligió opción (reembolso o cupón)?
       if (!chatEstado.optionChosen) {
         // El usuario confirmó que fue error, ahora ofrecer opciones
+        // ⚠️ REGLAS DE SEGURIDAD: NO mencionar el nombre del cupón (CHARGE_GO) antes de validar datos
         const optionText = 'Tenemos 2 opciones disponibles:\n' +
           'a) Te reembolsamos los 1200bs que transferiste por error.\n' +
-          'b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible llamado CHARGE_GO, el cual ingresas en la app y te permite escanear, expulsar el power bank y hacer uso durante 30 minutos.\n' +
+          'b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible, el cual te permitirá escanear, expulsar el power bank y hacer uso durante 30 minutos.\n' +
           '¿Qué prefieres?';
         console.log('[1200_ERROR] Offering options');
         await sendWhapi(chatId, optionText);
@@ -435,7 +436,8 @@ export async function POST(req: NextRequest) {
       // Paso 3: ¿El usuario eligió cupón y ya envió datos de verificación?
       if (chatEstado.optionChosen === 'cupon' && !chatEstado.verificationSent) {
         // El usuario eligió cupón, pedir verificación
-        const verificationText = 'Para activar tu cupón CHARGE_GO, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia.';
+        // ⚠️ REGLAS DE SEGURIDAD: NO mencionar el nombre del cupón (CHARGE_GO) antes de validar datos
+        const verificationText = 'Para activar tu cupón, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia.';
         console.log('[1200_ERROR] Requesting verification for cupon');
         await sendWhapi(chatId, verificationText);
         await saveAgentMessage(db, chatId, verificationText);
@@ -545,9 +547,10 @@ export async function POST(req: NextRequest) {
         
         // No enviar respuesta aún, el siguiente mensaje manejará las opciones
         // Pero si no hay más lógica, enviar las opciones ahora
+        // ⚠️ REGLAS DE SEGURIDAD: NO mencionar el nombre del cupón (CHARGE_GO) antes de validar datos
         const optionText = 'Tenemos 2 opciones disponibles:\n' +
           'a) Te reembolsamos los 1200bs que transferiste por error.\n' +
-          'b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible llamado CHARGE_GO, el cual ingresas en la app y te permite escanear, expulsar el power bank y hacer uso durante 30 minutos.\n' +
+          'b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible, el cual te permitirá escanear, expulsar el power bank y hacer uso durante 30 minutos.\n' +
           '¿Qué prefieres?';
         await sendWhapi(chatId, optionText);
         await saveAgentMessage(db, chatId, optionText);
@@ -616,7 +619,8 @@ export async function POST(req: NextRequest) {
           }
           
           // Pedir datos del usuario para el cupón
-          const dataText = 'Para procesar tu cupón CHARGE_GO, necesito tus datos:\n' +
+          // ⚠️ REGLAS DE SEGURIDAD: NO mencionar el nombre del cupón (CHARGE_GO) antes de validar datos
+          const dataText = 'Para procesar tu cupón, necesito tus datos:\n' +
             '- Nombre completo\n' +
             '- Cédula de identidad\n' +
             '- Teléfono\n' +

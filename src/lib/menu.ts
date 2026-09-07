@@ -260,14 +260,18 @@ NO inventes plazos, montos ni políticas distintos a los anteriores.`;
     case 'reembolso_1200_error':
       return `FLUJO ACTIVO: REEMBOLSO POR ERROR DE 1200BS
 El usuario menciona que transfirió 1200 Bs por error, creyendo que era el costo del alquiler.
+CONTEXTO CRÍTICO: 1200 Bs es el COSTO DE RENTA por 30 minutos, NO el depósito de garantía (12000/6000 Bs).
+Casi siempre que un usuario pide reembolso por 1200 Bs, es por error de confusión.
+
 DEBES seguir este procedimiento EXACTO:
 1. Primero VERIFICA que realmente fue un error. Pregunta: "Ok, los 1200bs que transferiste para hacer uso del servicio del alquiler power bank fueron por error, ¿cierto?"
 2. Si el usuario CONFIRMA que fue por error:
    - Ofrece las 2 opciones disponibles de forma clara:
    "Tenemos 2 opciones disponibles:
    a) Te reembolsamos los 1200bs que transferiste por error.
-   b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible llamado CHARGE_GO, el cual ingresas en la app y te permite escanear, expulsar el power bank y hacer uso durante 30 minutos.
+   b) Para que puedas hacer uso del power bank ya que lo necesitas y transferiste 1200bs, tenemos un cupón disponible, el cual te permitirá escanear, expulsar el power bank y hacer uso durante 30 minutos.
    ¿Qué prefieres?"
+   ⚠️ REGLAS DE SEGURIDAD: NUNCA menciones el nombre del cupón (CHARGE_GO) ANTES de validar los datos de seguridad.
 3. Si el usuario elige REEMBOLSO (opción a):
    - CAPTURA TODOS sus datos como en el flujo normal de reembolso (nombre, cédula, teléfono, cuenta bancaria 20 dígitos, banco, ubicación, fecha, hora, referencia, monto=1200bs).
    - Al confirmar, DEBES incluir la frase exacta "tu caso ha sido registrado" para que el sistema guarde el caso.
@@ -275,13 +279,15 @@ DEBES seguir este procedimiento EXACTO:
 4. Si el usuario elige CUPÓN (opción b):
    - CAPTURA TODOS sus datos igual que en reembolso (nombre, cédula, teléfono, cuenta bancaria, banco, ubicación, fecha, hora, referencia, monto=1200bs).
    - ANTES de enviar el código del cupón, DEBES solicitar verificación:
-     "Para activar tu cupón CHARGE_GO, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia."
+     "Para activar tu cupón, necesito verificar: por favor envíame nuevamente el número de referencia de la operación, el monto exacto y una captura de la transferencia."
    - UNA VEZ QUE RECIBAS estos 3 datos (referencia, monto, captura), VALIDA que el número de referencia y monto coincidan con los datos previos que ya capturaste.
    - Solo entonces responde: "¡Listo! Tu cupón CHARGE_GO está activo. Para usarlo en la app de Voltaje Plus: 1) Ingresa a la app, 2) Ve al ícono de menú en la esquina superior izquierda, 3) Selecciona 'Cupones', 4) Haz click en 'Agregar código promocional', 5) Ingresa CHARGE_GO. ¡Listo para usar! 💚"
-5. Si el usuario pregunta cómo se usa el cupón o dónde se coloca:
+5. Si el usuario pregunta cómo se usa el cupón o dónde se coloca (SIN haber elegido opción aún):
+   - NO reveles el nombre del cupón. Di: "El cupón te permitirá usar el power bank. Primero elige una opción (a o b) y luego te explico cómo usarlo."
+6. Si el usuario pregunta cómo se usa el cupón DESPUÉS de elegir opción b:
    - Explica los 5 pasos: "1. Ingresas en la app de Voltaje, 2. Ve al ícono en la esquina superior izquierda de un menú, 3. Ahí verás la opción 'cupones', ingresas a esa sección, 4. Vas a ver algo que dice 'agregar código promocional', 5. Haz click ahí en 'agregar código promocional' e ingresas CHARGE_GO"
-6. IMPORTANTE: En el caso de cupón, el sistema guardará automáticamente la observación "cupón CHARGE_GO" en el caso.
-NO inventes otras opciones ni ofrezcas alternativas no autorizadas.`;
+7. IMPORTANTE: En el caso de cupón, el sistema guardará automáticamente la observación "cupón CHARGE_GO" en el caso.
+NO inventes otras opciones ni ofrezcas alternativas no autorizadas. NUNCA reveles CHARGE_GO antes de validar referencia + monto + captura.`;
 
     case 'reembolso_cupon_charge_go':
       return `FLUJO ACTIVO: REEMBOLSO CUPÓN CHARGE_GO (validación pendiente)
