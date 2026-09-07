@@ -192,7 +192,8 @@ export function detectOption1200(input: string): 'reembolso' | 'cupon' | null {
   const reembolsoPatterns = [
     'reembolso', 'reembolsar', 'devolver', 'devolucion', 'devolución',
     'que me devuelvan', 'quiero mi dinero', 'recuperar el dinero',
-    'opcion a', 'opción a', 'la a', 'opcion 1', 'opción 1'
+    'opcion a', 'opción a', 'la a', 'opcion 1', 'opción 1',
+    'a\')', 'a', 'opción 1\')'  // Opciones cortas como "a)" o "a"
   ];
   
   // Opción B: Cupón
@@ -201,7 +202,9 @@ export function detectOption1200(input: string): 'reembolso' | 'cupon' | null {
     'charge_go', 'charge go', 'CHARGE_GO',
     'opcion b', 'opción b', 'la b', 'opcion 2', 'opción 2',
     'usar el power', 'hacer uso', 'alquilar', 'escane',
-    'prefiero el cupon', 'quiero el cupon', 'me interesa el cupon'
+    'prefiero el cupon', 'quiero el cupon', 'me interesa el cupon',
+    'b\')', 'b', 'opción 2\')',  // Opciones cortas como "b)" o "b"
+    'prefiero usar el power bank', 'prefiero la opción b'
   ];
   
   if (reembolsoPatterns.some(p => text.includes(p))) {
