@@ -127,9 +127,9 @@ export function detectFlow(input: string): FlowId | null {
   // Cuando un usuario pide reembolso por 1200 Bs, casi siempre es por error al confundir
   // el costo de renta con el depósito de garantía. Sonia DEBE detectar esto.
   const monto1200Patterns = [
-    '1200bs', '1.200bs', '1200 bs', '1.200 bs',
+    '1200bs', '1.200bs', '1200 bs', '1.200 bs', '1200', '1.200',
     'mil doscientos', 'mil y doscientos',
-    '1200bolivares', '1.200bolivares',
+    '1200bolivares', '1.200bolivares', '1200 bolivares', '1.200 bolivares',
     'cobro doble',
     'equivoque con los 1200'
   ];
