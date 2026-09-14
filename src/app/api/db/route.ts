@@ -33,6 +33,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ casos: null });
     }
 
+    if (action === 'getCasosAtencion') {
+      const snapshot = await get(child(dbRef, 'casos_atencion'));
+      if (snapshot.exists()) {
+        return NextResponse.json({ casos: snapshot.val() });
+      }
+      return NextResponse.json({ casos: null });
+    }
+
     if (action === 'getChats') {
       const chatsRef = ref(db, 'chats');
       const snapshot = await get(chatsRef);

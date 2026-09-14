@@ -140,39 +140,39 @@ export function detectFlow(input: string): FlowId | null {
   }
 
   // 4) DETECCIÓN ESPECIAL: 1200bs en contexto de reembolso o transferencia
-  const monto1200Patterns = [
-    '1200bs', '1.200bs', '1200 bs', '1.200 bs', '1200', '1.200',
-    'mil doscientos', 'mil y doscientos',
-    '1200bolivares', '1.200bolivares', '1200 bolivares', '1.200 bolivares',
-    'cobro doble',
-    'equivoque con los 1200'
+  const monto1200Regexes = [
+    /\b1200bs\b/i, /\b1\.200bs\b/i, /\b1200\s*bs\b/i, /\b1\.200\s*bs\b/i,
+    /\b1200\b/, /\b1\.200\b/,
+    /mil\s*doscientos/i, /mil\s*y\s*doscientos/i,
+    /\b1200\s*bolivares?\b/i, /\b1\.200\s*bolivares?\b/i,
+    /cobro\s*doble/i,
+    /equivoque\s*con\s*los\s*1200/i
   ];
-  const errorPatterns = [
-    'error', 'equivocado', 'equivoc', 'me equivoque',
-    'por error', 'fue error', 'hice error',
-    'creia que era', 'crei que era', 'pensé que era', '料 que era',
-    'confundi', 'transferi mal',
-    'no era', 'no es', 'no son',
-    'me pasé', 'me equivoqué',
-    'y eran', 'y eran ', ' eran ', 'y son', 'y son ', ' son ',
-    'debían ser', 'debian ser', 'tenía que ser', 'tenia que ser', 'tenían que ser', 'tenian que ser',
-    'y no eran', 'y no son',
-    '12000', '12.000', 'doce mil', '12 mil'
+  const errorRegexes = [
+    /error/i, /equivocado/i, /equivoc/i, /me\s+equivoque/i,
+    /por\s+error/i, /fue\s+error/i, /hice\s+error/i,
+    /creia?\s+que\s+era/i, /pens[eé]\s+que\s+era/i,
+    /confundi/i, /transferi\s+mal/i,
+    /no\s+era/i, /no\s+es/i, /no\s+son/i,
+    /me\s+pas[eé]/i, /me\s+equivoqu[eé]/i,
+    /y\s+eran/i, /y\s+son/i,
+    /deb[íi]an\s+ser/i, /ten[íi]a\s+que\s+ser/i, /ten[íi]an\s+que\s+ser/i,
+    /y\s+no\s+eran/i, /y\s+no\s+son/i,
+    /\b12000\b/, /\b12\.000\b/, /doce\s+mil/i, /\b12\s+mil\b/i
   ];
-  const transferPatterns = [
-    'transferi', 'transferencia', 'transfiere',
-    'pague', 'pag', 'deposite', 'depósito', 'deposito',
-    'ingrese', 'envie', 'pase'
+  const transferRegexes = [
+    /transferi/i, /transferencia/i, /transfiere/i,
+    /pague?/i, /deposite?/i, /ingrese/i, /envie/i, /pase/i
   ];
-  const reembolsoPatterns = [
-    'reembolso', 'reembolsar', 'devolver', 'devolucion', 'devolución',
-    'recuperar mi dinero', 'recuperar el dinero', 'quiero mi dinero'
+  const reembolsoRegexes = [
+    /reembolso/i, /reembolsar/i, /devolver/i, /devolucion/i,
+    /recuperar\s+mi\s+dinero/i, /recuperar\s+el\s+dinero/i, /quiero\s+mi\s+dinero/i
   ];
 
-  const hasMonto1200 = monto1200Patterns.some(p => text.includes(p));
-  const hasError = errorPatterns.some(p => text.includes(p));
-  const hasTransfer = transferPatterns.some(p => text.includes(p));
-  const hasReembolso = reembolsoPatterns.some(p => text.includes(p));
+  const hasMonto1200 = monto1200Regexes.some(r => r.test(text));
+  const hasError = errorRegexes.some(r => r.test(text));
+  const hasTransfer = transferRegexes.some(r => r.test(text));
+  const hasReembolso = reembolsoRegexes.some(r => r.test(text));
 
   // Si detecta 1200bs + (error O transferencia O reembolso), activa flujo especial
   if (hasMonto1200 && (hasError || hasTransfer || hasReembolso)) {

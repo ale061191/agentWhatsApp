@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store/useStore';
-import { Bot, Search, Settings, BookOpen, CreditCard, MoreVertical, Trash2 } from 'lucide-react';
+import { Bot, Search, Settings, BookOpen, CreditCard, MoreVertical, Trash2, FileText } from 'lucide-react';
 import SystemPromptModal from './SystemPromptModal';
 import CasosReembolsoModal from './CasosReembolsoModal';
+import CasosAtencionModal from './CasosAtencionModal';
 
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
@@ -36,6 +37,7 @@ export default function Sidebar() {
   const [loading, setLoading] = useState(true);
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
   const [showCasosReembolso, setShowCasosReembolso] = useState(false);
+  const [showCasosAtencion, setShowCasosAtencion] = useState(false);
   const [openMenuChat, setOpenMenuChat] = useState<string | null>(null);
 
   useEffect(() => {
@@ -194,6 +196,14 @@ export default function Sidebar() {
             <CreditCard className="w-4 h-4" />
             <span>Casos Reembolso</span>
           </button>
+          <button 
+            onClick={() => setShowCasosAtencion(true)}
+            className="w-full py-[1px] flex items-center justify-center gap-2 px-4 bg-[rgba(37,211,102,0.1)] hover:bg-[rgba(37,211,102,0.2)] rounded-[2px] transition-colors text-sm text-gray-400 hover:text-white"
+            style={{ marginTop: '0px', marginBottom: '1px', paddingTop: '10px', paddingBottom: '10px' }}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Casos Atención</span>
+          </button>
         </div>
       </div>
       
@@ -205,6 +215,11 @@ export default function Sidebar() {
       <CasosReembolsoModal 
         isOpen={showCasosReembolso} 
         onClose={() => setShowCasosReembolso(false)} 
+      />
+
+      <CasosAtencionModal 
+        isOpen={showCasosAtencion} 
+        onClose={() => setShowCasosAtencion(false)} 
       />
     </div>
   );

@@ -454,8 +454,8 @@ export async function POST(req: NextRequest) {
         
         if (!updates.estado.ubicacion) {
           const ubicacionPatterns = [
-            /(?:en|ubicad[ao]|lugar|sitio|direcci[oó]n|zona)\s*(?:es|:|en)\s*([^,.\n]+)/i,
-            /(?:en|en el|en la)\s+([^,.\n]+)(?:\s+(?:para|con|el|la|\.|$))/i,
+            /(?:en|ubicad[ao]|ubicaci[oó]n|lugar|sitio|direcci[oó]n|zona)\s*(?:es|:)?\s*(?:en\s*)?([^,.\n]+)/i,
+            /(?:en|en el|en la|ubicado en|ubicada en)\s+([^,.\n]+)/i,
           ];
           for (const pattern of ubicacionPatterns) {
             const match = text.match(pattern);
