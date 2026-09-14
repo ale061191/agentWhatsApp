@@ -3,11 +3,14 @@
 export function extractMontoBs(text: string): number | null {
   const lower = text.toLowerCase();
   
-  // Patrones con "bs" o "bolivares"
+  // Patrones con "bs" o "bolivares" - SOPORTA números con y sin separadores de miles
   const patterns = [
+    // 12000, 12.000, 12,000, 6000, 6.000, etc. seguido de bs/bolivares
     /(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:bs|bolivares?|bss?)\b/i,
-    /\b(?:pague?|pagué|transferi|deposite?|ingrese?|envie?|monto|pago)\D*(\d{1,3}(?:[.,]\d{3})*)/i,
-    /\b(\d{1,3}(?:[.,]\d{3})*)\s*(?:bs|bolivares?|bss?)/i,
+    // "pague 12000", "transferí 12.000", etc.
+    /\b(?:pague?|pagué|transferi|deposite?|ingrese?|envie?|monto|pago)\D*(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)/i,
+    // Número suelto seguido de bs/bolivares
+    /\b(\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?)\s*(?:bs|bolivares?|bss?)\b/i,
   ];
   
   for (const pattern of patterns) {
@@ -19,25 +22,18 @@ export function extractMontoBs(text: string): number | null {
     }
   }
   
-  // Palabras clave para montos exactos comunes
-  const exactMatches: Record<string, number> = {
-    'mil doscientos': 1200,
-    'mil dos cientos': 1200,
-    '1200': 1200,
-    '1.200': 1200,
-    'doce mil': 12000,
-    '12000': 12000,
-    '12.000': 12000,
-    'seis mil': 6000,
-    '6000': 6000,
-    '6.000': 6000,
-  };
+  // Palabras clave para montos exactos comunes - USAR LÍMITES DE PALABRA
+  const exactPatterns = [
+    { regex: /\b(?:mil\s+doscientos|mil\s+dos\s+cientos|1200|1\.200)\b/, value: 1200 },
+    { regex: /\b(?:doce\s+mil|12000|12\.000)\b/, value: 12000 },
+    { regex: /\b(?:seis\s+mil|6000|6\.000)\b/, value: 6000 },
+  ];
   
-  for (const [key, val] of Object.entries(exactMatches)) {
-    if (lower.includes(key)) return val;
+  for (const { regex, value } of exactPatterns) {
+    if (regex.test(lower)) return value;
   }
   
-  // Buscar números sueltos de 4-5 dígitos (probables montos)
+  // Buscar números sueltos de 4-5 dígitos (probables montos) - CON LÍMITES
   const nums = lower.match(/\b\d{4,5}\b/g);
   if (nums) {
     for (const n of nums) {

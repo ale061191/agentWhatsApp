@@ -338,7 +338,7 @@ export async function POST(req: NextRequest) {
     // que el webhook ya usa y las reglas ya permiten), evitando depender de un
     // path nuevo que podrÃ­a estar bloqueado por las reglas de Firebase.
     const chatEstRef = ref(db, 'chats/' + chatId);
-    let estado: { flow?: FlowId; error1200Confirmed?: boolean; optionChosen?: string; verificationSent?: boolean; cuponSent?: boolean; waitingFor?: string; prevUserData?: any; verificationRequested?: boolean } = {};
+    let estado: any = {};
     try {
       const chatSnap2 = await get(chatEstRef);
       estado = chatSnap2.val()?.estado || {};
@@ -348,11 +348,179 @@ export async function POST(req: NextRequest) {
 
     const userText = (customMsgForAI || '').trim();
 
-    // PRIMER CONTACTO: aÃºn no hay estado registrado â†’ SIEMPRE mostrar el menÃº
-    // de bienvenida una vez, sin importar si el mensaje trae intenciÃ³n clara.
-    // (DecisiÃ³n de Ezequiel 04/08/2026: uniformidad en el primer contacto.)
-    if (!estado.flow) {
-      console.log('[MENU] First contact â€” sending menu.');
+    // ===== PRIMERO: Procesar captura de datos multi-paso ANTES de los manejadores =====
+    // Leer estado actualizado desde BD (incluyendo capturas previas en este request)
+    let estadoActual: any = estado;
+    try {
+      const estSnap = await get(chatEstRef);
+      estadoActual = estSnap.val()?.estado || estado;
+    } catch (e) {
+      console.log('[MENU] Error re-leyendo estado:', e);
+    }
+    
+    const waitingForCapture = estadoActual.waitingFor;
+    const currentFlow = estadoActual.flow || 'menu';
+    
+    // Procesar captura de datos si hay waitingFor pendiente
+    if (waitingForCapture) {
+      const userLower = userText.toLowerCase();
+      let updates: any = { estado: { ...estadoActual } };
+      
+      // publicidad_dooh - capturar marca y plan
+      if (currentFlow === 'publicidad_dooh' && waitingForCapture === 'marca_plan') {
+        let marca = '';
+        let plan = '';
+        const text = userText.trim();
+        const lower = text.toLowerCase();
+        
+        const planes = ['estandar', 'estándar', 'premium', 'dominancia', 'exclusiva'];
+        for (const p of planes) {
+          if (lower.includes(p)) { plan = p.charAt(0).toUpperCase() + p.slice(1); break; }
+        }
+        
+        const marcaPatterns = [
+          /(?:marca|empresa|negocio|brand)\s*(?:es|:|se llama)\s*([^,.\n]+)/i,
+          /^(?:para|quiero).*?(?:mi\s+)?(?:marca|empresa|negocio)\s+([^,.\n]+)/i,
+          /^([^,.\n]+?)(?:\s*,\s*(?:plan|quiero|estandar|premium|dominancia))/i,
+        ];
+        
+        for (const pattern of marcaPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) { marca = match[1].trim(); break; }
+        }
+        
+        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!marca) marca = lineas[0] || text.slice(0, 100);
+        if (!plan) plan = 'sin definir';
+        
+        updates.estado.marca = marca.slice(0, 100);
+        updates.estado.plan = plan;
+        await update(chatEstRef, updates);
+        estadoActual = updates.estado; // Actualizar estado local
+      }
+      
+      // estacion_gratis - capturar negocio y zona
+      if (currentFlow === 'estacion_gratis' && waitingForCapture === 'negocio_zona') {
+        let negocio = '';
+        let zona = '';
+        const text = userText.trim();
+        
+        const negocioPatterns = [
+          /(?:negocio|negocio se llama|negocio es|se llama|me llamo|mi negocio)\s*(?:es|:)\s*([^,.\n]+)/i,
+          /^([^,.\n]+?)(?:\s*,\s*(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n))/i,
+        ];
+        
+        for (const pattern of negocioPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) { negocio = match[1].trim(); break; }
+        }
+        
+        const zonaPatterns = [
+          /(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n)\s*(?:es|:|en)\s*([^,.\n]+)/i,
+          /(?:en|zona|direcci[oó]n)\s+([^,.\n]+)$/i,
+        ];
+        
+        for (const pattern of zonaPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) { zona = match[1].trim(); break; }
+        }
+        
+        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!negocio && lineas[0]) negocio = lineas[0];
+        if (!zona && lineas.length > 1) zona = lineas.slice(1).join(' ');
+        
+        updates.estado.negocio = negocio.slice(0, 100) || text.slice(0, 100);
+        updates.estado.zona = zona || 'no especificada';
+        await update(chatEstRef, updates);
+        estadoActual = updates.estado;
+      }
+      
+      // estacion_evento - capturar datos
+      if (currentFlow === 'estacion_evento' && waitingForCapture === 'datos_evento') {
+        const text = userText.trim();
+        const lower = text.toLowerCase();
+        
+        if (!updates.estado.fecha) {
+          const fechaMatch = text.match(/\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?/);
+          if (fechaMatch) updates.estado.fecha = fechaMatch[0];
+        }
+        
+        if (!updates.estado.asistentes) {
+          const asistentesMatch = lower.match(/(\d{1,4})\s*(?:personas?|invitados?|asistentes?|gente)/);
+          if (asistentesMatch) updates.estado.asistentes = asistentesMatch[1];
+          const paraMatch = lower.match(/para\s+(\d{1,4})\s*(?:personas?|invitados?)/);
+          if (paraMatch) updates.estado.asistentes = paraMatch[1];
+        }
+        
+        if (!updates.estado.ubicacion) {
+          const ubicacionPatterns = [
+            /(?:en|ubicad[ao]|lugar|sitio|direcci[oó]n|zona)\s*(?:es|:|en)\s*([^,.\n]+)/i,
+            /(?:en|en el|en la)\s+([^,.\n]+)(?:\s+(?:para|con|el|la|\.|$))/i,
+          ];
+          for (const pattern of ubicacionPatterns) {
+            const match = text.match(pattern);
+            if (match && match[1]) { updates.estado.ubicacion = match[1].trim(); break; }
+          }
+        }
+        
+        if (!updates.estado.tipoEvento) {
+          const tipoKeywords = ['boda', 'fiesta', 'conferencia', 'congreso', 'feria', 'cumpleaños', 'quince', '15 años', 'graduación', 'empresarial', 'corporativo', 'show', 'concierto', 'festival'];
+          for (const kw of tipoKeywords) {
+            if (lower.includes(kw)) { updates.estado.tipoEvento = kw; break; }
+          }
+          if (!updates.estado.tipoEvento) {
+            const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+            updates.estado.tipoEvento = lineas[0]?.slice(0, 50) || text.slice(0, 50);
+          }
+        }
+        
+        await update(chatEstRef, updates);
+        estadoActual = updates.estado;
+      }
+      
+      // agente_humano - capturar nombre y motivo
+      if (currentFlow === 'agente_humano' && waitingForCapture === 'nombre_motivo') {
+        const text = userText.trim();
+        const lower = text.toLowerCase();
+        
+        let nombre = '';
+        let motivo = '';
+        
+        const nombrePatterns = [
+          /(?:me llamo|soy|mi nombre es|nombre)\s*(?:es|:)\s*([^,.\n]+)/i,
+          /^([^,.\n]+?)(?:\s*(?:y|,)\s*(?:quiero|necesito|motivo|trabajo))/i,
+        ];
+        
+        for (const pattern of nombrePatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) { nombre = match[1].trim(); break; }
+        }
+        
+        const motivoPatterns = [
+          /(?:motivo|porque|por qué|raz[oó]n)\s*(?:es|:)\s*([^,.\n]+)/i,
+          /(?:quiero|necesito|busco)\s+(?:hablar|ayuda|ayuda con|resolver)\s+([^,.\n]+)/i,
+          /(?:y|,)\s*(?:quiero|necesito|motivo|busco)\s+([^,.\n]+)/i,
+        ];
+        
+        for (const pattern of motivoPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) { motivo = match[1].trim(); break; }
+        }
+        
+        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!nombre) nombre = lineas[0] || text.slice(0, 50);
+        if (!motivo) motivo = lineas.slice(1).join(' ') || text.slice(nombre.length).slice(0, 100) || 'no especificado';
+        
+        updates.estado.nombre = nombre.slice(0, 50);
+        updates.estado.motivo = motivo.slice(0, 200);
+        await update(chatEstRef, updates);
+        estadoActual = updates.estado;
+      }
+    }
+
+    // PRIMER CONTACTO: aún no hay estado registrado → SIEMPRE mostrar el menú
+    if (!estadoActual.flow) {
+      console.log('[MENU] First contact — sending menu.');
       const menuText = buildMenuText();
       await sendWhapi(chatId, menuText);
       await saveAgentMessage(db, chatId, menuText);
@@ -361,11 +529,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // Detectar a quÃ© flujo debe moverse segÃºn el mensaje del usuario.
+    // Detectar a qué flujo debe moverse según el mensaje del usuario.
     const detected = detectFlow(userText);
-    let activeFlow: FlowId = (estado.flow as FlowId) || 'menu';
+    let activeFlow: FlowId = (estadoActual.flow as FlowId) || 'menu';
 
-    if (detected && detected !== estado.flow) {
+    if (detected && detected !== estadoActual.flow) {
       activeFlow = detected;
       console.log('[MENU] Flow changed to:', activeFlow);
     } else if (detected === 'menu') {
@@ -375,14 +543,8 @@ export async function POST(req: NextRequest) {
     // === LÓGICA ESPECIAL PARA FLUJO DE 1200BS (cupón CHARGE_GO) ===
     // Este flujo requiere interacción paso a paso, no solo el prompt de IA
     if (activeFlow === 'reembolso_1200_error') {
-      // Cargar el estado extendido del chat (donde guardamos datos temporales)
-      let chatEstado: any = {};
-      try {
-        const estSnap = await get(chatEstRef);
-        chatEstado = estSnap.val()?.estado || {};
-      } catch (e) {
-        console.log('[1200_ERROR] Error reading estado:', e);
-      }
+      // Usar estadoActual ya actualizado con captura de datos
+      const chatEstado = estadoActual;
 
       // Paso 1: ¿El usuario ya confirmó que fue error?
       if (!chatEstado.error1200Confirmed) {
@@ -817,12 +979,8 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
 
     // --- FLUJO: publicidad_dooh ---
     if (activeFlow === 'publicidad_dooh') {
-      // Verificar si ya tenemos marca y plan en el estado
-      let chatEstado: any = {};
-      try {
-        const estSnap = await get(chatEstRef);
-        chatEstado = estSnap.val()?.estado || {};
-      } catch (e) {}
+      // Usar estadoActual ya actualizado con captura de datos
+      const chatEstado = estadoActual;
       
       if (!chatEstado.marca || !chatEstado.plan) {
         // Paso 1: Pedir marca y plan
@@ -873,11 +1031,7 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
 
     // --- FLUJO: estacion_gratis ---
     if (activeFlow === 'estacion_gratis') {
-      let chatEstado: any = {};
-      try {
-        const estSnap = await get(chatEstRef);
-        chatEstado = estSnap.val()?.estado || {};
-      } catch (e) {}
+      const chatEstado = estadoActual;
       
       if (!chatEstado.negocio || !chatEstado.zona) {
         // Paso 1: Pedir negocio y zona
@@ -924,11 +1078,7 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
 
     // --- FLUJO: estacion_evento ---
     if (activeFlow === 'estacion_evento') {
-      let chatEstado: any = {};
-      try {
-        const estSnap = await get(chatEstRef);
-        chatEstado = estSnap.val()?.estado || {};
-      } catch (e) {}
+      const chatEstado = estadoActual;
       
       const necesita = ['tipoEvento', 'fecha', 'ubicacion', 'asistentes'].filter(k => !chatEstado[k]);
       
@@ -988,11 +1138,7 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
 
     // --- FLUJO: agente_humano ---
     if (activeFlow === 'agente_humano') {
-      let chatEstado: any = {};
-      try {
-        const estSnap = await get(chatEstRef);
-        chatEstado = estSnap.val()?.estado || {};
-      } catch (e) {}
+      const chatEstado = estadoActual;
       
       if (!chatEstado.nombre || !chatEstado.motivo) {
         // Paso 1: Pedir nombre y motivo
@@ -1048,242 +1194,6 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       } catch (e) {}
       
       return NextResponse.json({ success: true });
-    }
-
-    // --- CAPTURA DE DATOS PARA FLUJOS DE MÚLTIPLES PASOS ---
-    // Detectar si el usuario está respondiendo con datos para flujos multi-paso
-    const chatEstSnap = await get(chatEstRef);
-    const chatEstData = chatEstSnap.val() || {};
-    const waitingFor = chatEstData.estado?.waitingFor;
-    
-    if (waitingFor) {
-      const userLower = userText.toLowerCase();
-      let updates: any = { estado: { ...chatEstData.estado } };
-      
-      const flow = activeFlow as FlowId;
-      
-      // publicidad_dooh - capturar marca y plan
-      if (flow === 'publicidad_dooh' && waitingFor === 'marca_plan') {
-        // Extraer marca y plan del texto natural
-        // Ej: "Mi marca es CocaCola, quiero el plan Premium"
-        // Ej: "Empresa: Nike, Plan: Estándar 24"
-        // Ej: "Quiero publicidad para mi negocio X en el plan Dominancia Exclusiva"
-        let marca = '';
-        let plan = '';
-        
-        const text = userText.trim();
-        const lower = text.toLowerCase();
-        
-        // Detectar plan por palabras clave
-        const planes = ['estandar', 'estándar', 'premium', 'dominancia', 'exclusiva'];
-        for (const p of planes) {
-          if (lower.includes(p)) { 
-            plan = p.charAt(0).toUpperCase() + p.slice(1);
-            break; 
-          }
-        }
-        
-        // Patrones para extraer marca
-        const marcaPatterns = [
-          /(?:marca|empresa|negocio|brand)\s*(?:es|:|se llama)\s*([^,.\n]+)/i,
-          /^(?:para|quiero).*?(?:mi\s+)?(?:marca|empresa|negocio)\s+([^,.\n]+)/i,
-          /^([^,.\n]+?)(?:\s*,\s*(?:plan|quiero|estandar|premium|dominancia))/i,
-        ];
-        
-        for (const pattern of marcaPatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) {
-            marca = match[1].trim();
-            break;
-          }
-        }
-        
-        // Fallback: primera línea o todo el texto
-        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        if (!marca) marca = lineas[0] || text.slice(0, 100);
-        if (!plan) plan = 'sin definir';
-        
-        updates.estado.marca = marca.slice(0, 100);
-        updates.estado.plan = plan;
-        
-        try {
-          await update(chatEstRef, updates);
-        } catch (e) {}
-      }
-      
-      // estacion_gratis - capturar negocio y zona
-      if (flow === 'estacion_gratis' && waitingFor === 'negocio_zona') {
-        // Extraer negocio y zona del texto natural
-        // Ej: "El nombre de mi negocio es Pepe trueno motora, se ubica en Montalban"
-        // Ej: "Mi negocio se llama X, está en Y"
-        // Ej: "Negocio: X, Zona: Y"
-        let negocio = '';
-        let zona = '';
-        
-        const text = userText.trim();
-        
-        // Patrones para extraer nombre del negocio
-        const negocioPatterns = [
-          /(?:negocio|negocio se llama|negocio es|se llama|me llamo|mi negocio)\s*(?:es|:)\s*([^,.\n]+)/i,
-          /^([^,.\n]+?)(?:\s*,\s*(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n))/i,
-        ];
-        
-        for (const pattern of negocioPatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) {
-            negocio = match[1].trim();
-            break;
-          }
-        }
-        
-        // Si no encontró con patrones, usar primera parte antes de coma/punto
-        if (!negocio) {
-          const partes = text.split(/[,.]/);
-          negocio = partes[0].replace(/^(?:el nombre de mi negocio es|mi negocio se llama|mi negocio es|negocio|se llama)\s*/i, '').trim();
-        }
-        
-        // Patrones para extraer zona/ubicación
-        const zonaPatterns = [
-          /(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n)\s*(?:es|:|en)\s*([^,.\n]+)/i,
-          /(?:en|zona|direcci[oó]n)\s+([^,.\n]+)$/i,
-        ];
-        
-        for (const pattern of zonaPatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) {
-            zona = match[1].trim();
-            break;
-          }
-        }
-        
-        // Si hay múltiples líneas, usar heurística original como fallback
-        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        if (!negocio && lineas[0]) negocio = lineas[0];
-        if (!zona && lineas.length > 1) zona = lineas.slice(1).join(' ');
-        
-        updates.estado.negocio = negocio.slice(0, 100) || text.slice(0, 100);
-        updates.estado.zona = zona || 'no especificada';
-        
-        try {
-          await update(chatEstRef, updates);
-        } catch (e) {}
-      }
-      
-      // estacion_evento - capturar datos
-      if (flow === 'estacion_evento' && waitingFor === 'datos_evento') {
-        // Extraer tipo, fecha, ubicación, asistentes del texto natural
-        // Ej: "Es una boda el 15/12 en Caracas para 200 personas"
-        // Ej: "Tipo: conferencia, Fecha: 20/01, Ubicación: CCCT, Asistentes: 500"
-        // Ej: "Evento: fiesta de 15 años, 10 de marzo, Hotel Marriott, 150 invitados"
-        
-        const text = userText.trim();
-        const lower = text.toLowerCase();
-        
-        // Detectar fecha (dd/mm, dd-mm, dd/mm/yyyy, etc)
-        if (!updates.estado.fecha) {
-          const fechaMatch = text.match(/\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?/);
-          if (fechaMatch) updates.estado.fecha = fechaMatch[0];
-        }
-        
-        // Detectar asistentes (número + palabras clave)
-        if (!updates.estado.asistentes) {
-          const asistentesMatch = lower.match(/(\d{1,4})\s*(?:personas?|invitados?|asistentes?|gente)/);
-          if (asistentesMatch) updates.estado.asistentes = asistentesMatch[1];
-          // También buscar "para X personas"
-          const paraMatch = lower.match(/para\s+(\d{1,4})\s*(?:personas?|invitados?)/);
-          if (paraMatch) updates.estado.asistentes = paraMatch[1];
-        }
-        
-        // Detectar ubicación (palabras clave de lugar)
-        if (!updates.estado.ubicacion) {
-          const ubicacionPatterns = [
-            /(?:en|ubicad[ao]|lugar|sitio|direcci[oó]n|zona)\s*(?:es|:|en)\s*([^,.\n]+)/i,
-            /(?:en|en el|en la)\s+([^,.\n]+)(?:\s+(?:para|con|el|la|\.|$))/i,
-          ];
-          for (const pattern of ubicacionPatterns) {
-            const match = text.match(pattern);
-            if (match && match[1]) {
-              updates.estado.ubicacion = match[1].trim();
-              break;
-            }
-          }
-        }
-        
-        // Detectar tipo de evento (primeras palabras o palabras clave)
-        if (!updates.estado.tipoEvento) {
-          const tipoKeywords = ['boda', 'fiesta', 'conferencia', 'congreso', 'feria', 'cumpleaños', 'quince', '15 años', 'graduación', 'empresarial', 'corporativo', 'show', 'concierto', 'festival'];
-          for (const kw of tipoKeywords) {
-            if (lower.includes(kw)) {
-              updates.estado.tipoEvento = kw;
-              break;
-            }
-          }
-          // Si no encontró keyword, usar primera parte del texto
-          if (!updates.estado.tipoEvento) {
-            const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-            updates.estado.tipoEvento = lineas[0]?.slice(0, 50) || text.slice(0, 50);
-          }
-        }
-        
-        try {
-          await update(chatEstRef, updates);
-        } catch (e) {}
-      }
-      
-      // agente_humano - capturar nombre y motivo
-      if (flow === 'agente_humano' && waitingFor === 'nombre_motivo') {
-        // Extraer nombre y motivo del texto natural
-        // Ej: "Me llamo Juan, quiero hablar por un problema con mi factura"
-        // Ej: "Nombre: María, Motivo: consulta sobre publicidad"
-        // Ej: "Soy Pedro y necesito ayuda con un reembolso"
-        
-        const text = userText.trim();
-        const lower = text.toLowerCase();
-        
-        let nombre = '';
-        let motivo = '';
-        
-        // Patrones para nombre
-        const nombrePatterns = [
-          /(?:me llamo|soy|mi nombre es|nombre)\s*(?:es|:)\s*([^,.\n]+)/i,
-          /^([^,.\n]+?)(?:\s*(?:y|,)\s*(?:quiero|necesito|motivo|trabajo))/i,
-        ];
-        
-        for (const pattern of nombrePatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) {
-            nombre = match[1].trim();
-            break;
-          }
-        }
-        
-        // Patrones para motivo
-        const motivoPatterns = [
-          /(?:motivo|porque|por qué|raz[oó]n)\s*(?:es|:)\s*([^,.\n]+)/i,
-          /(?:quiero|necesito|busco)\s+(?:hablar|ayuda|ayuda con|resolver)\s+([^,.\n]+)/i,
-          /(?:y|,)\s*(?:quiero|necesito|motivo|busco)\s+([^,.\n]+)/i,
-        ];
-        
-        for (const pattern of motivoPatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) {
-            motivo = match[1].trim();
-            break;
-          }
-        }
-        
-        // Fallback: usar líneas separadas
-        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        if (!nombre) nombre = lineas[0] || text.slice(0, 50);
-        if (!motivo) motivo = lineas.slice(1).join(' ') || text.slice(nombre.length).slice(0, 100) || 'no especificado';
-        
-        updates.estado.nombre = nombre.slice(0, 50);
-        updates.estado.motivo = motivo.slice(0, 200);
-        
-        try {
-          await update(chatEstRef, updates);
-        } catch (e) {}
-      }
     }
 
     // Persistimos el flujo actual para la siguiente iteraciÃ³n (best-effort).
