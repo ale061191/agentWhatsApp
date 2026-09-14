@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from 'next/server';
 import { Message } from '@/types';
 import { getFirebaseDB } from '@/lib/firebase';
-import { Database, ref, set, get, child, update, runTransaction } from 'firebase/database';
+import { ref, set, get, child, update, runTransaction } from 'firebase/database';
 import {
   buildMenuText,
   detectFlow,
@@ -11,6 +11,8 @@ import {
   SONIA_IDENTITY,
   FlowId,
 } from '@/lib/menu';
+
+import { extractMontoBs, clasificarMonto, generarCasoId, formatearFechaAhora } from '@/lib/monto';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
@@ -35,7 +37,7 @@ function sanitizeKey(key: string): string {
 }
 
 /** Guarda un mensaje saliente del agente y lo persiste en el historial. */
-async function saveAgentMessage(db: Database, chatId: string, content: string) {
+async function saveAgentMessage(db: any, chatId: string, content: string) {
   const aiId = 'a_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
   await set(ref(db, 'messages/' + chatId + '/' + aiId), {
     id: aiId,
@@ -169,7 +171,7 @@ export async function POST(req: NextRequest) {
       const mId = m.id ? sanitizeKey(m.id) : 'm_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
 
       const dedupRef = ref(db, 'dedup/' + mId);
-      const dedupResult = await runTransaction(dedupRef, (current) => {
+      const dedupResult = await runTransaction(dedupRef, (current: number | null) => {
         if (current) return;
         return Date.now();
       });
@@ -239,7 +241,7 @@ export async function POST(req: NextRequest) {
       let newCount = 0;
 
       try {
-        const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount) => {
+        const txResult = await runTransaction(child(chatRef, 'imageCount'), (currentCount: number | null) => {
           const count = (currentCount || 0) + msgs.filter(isImageMessage).length;
           if (count >= 3) return 0;
           return count;
@@ -361,7 +363,7 @@ export async function POST(req: NextRequest) {
 
     // Detectar a quÃ© flujo debe moverse segÃºn el mensaje del usuario.
     const detected = detectFlow(userText);
-    let activeFlow: FlowId = estado.flow || 'menu';
+    let activeFlow: FlowId = (estado.flow as FlowId) || 'menu';
 
     if (detected && detected !== estado.flow) {
       activeFlow = detected;
@@ -689,6 +691,436 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // ===== NUEVOS FLUJOS SEGÚN PROMPT ACTUALIZADO =====
+
+    // --- FLUJO: falla_alquiler (primer paso - preguntar monto) ---
+    if (activeFlow === 'falla_alquiler') {
+      console.log('[FALLA_ALQUILER] Preguntando monto exacto');
+      const preguntaMonto = '¡Uy, lamento mucho eso! 😣 Para ayudarte rápido, ¿de cuánto fue el monto exacto que pagaste?';
+      await sendWhapi(chatId, preguntaMonto);
+      await saveAgentMessage(db, chatId, preguntaMonto);
+      
+      try {
+        await update(chatEstRef, { estado: { flow: 'falla_alquiler_monto', waitingFor: 'monto_exacto' } });
+      } catch (e) {
+        console.log('[FALLA_ALQUILER] persist state failed:', e);
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    // --- FLUJO: falla_alquiler_monto (clasificar por monto) ---
+    if (activeFlow === 'falla_alquiler_monto' && estado.waitingFor === 'monto_exacto') {
+      const monto = extractMontoBs(userText);
+      console.log('[FALLA_ALQUILER_MONTO] Monto detectado:', monto);
+      
+      if (monto === null) {
+        const reintento = 'No logré identificar el monto 🙈 ¿Me dices exactamente cuánto pagaste? (ej: 1200, 12000, 6000, etc.)';
+        await sendWhapi(chatId, reintento);
+        await saveAgentMessage(db, chatId, reintento);
+        return NextResponse.json({ success: true });
+      }
+      
+      const clasificacion = clasificarMonto(monto);
+      console.log('[FALLA_ALQUILER_MONTO] Clasificación:', clasificacion);
+      
+      if (clasificacion === 'falla_12000') {
+        // Flujo 1.A: Escalar a soporte técnico (12000 Bs)
+        const casoId = generarCasoId();
+        const ubicacion = oldChat.name ? `Ubicación: ${oldChat.name}` : 'Ubicación: no especificada';
+        const observaciones = `Revocado/no dispensó batería — escalado a soporte técnico. ${ubicacion}.`;
+        
+        // Guardar caso en "Casos de Atención"
+        try {
+          await set(ref(db, 'casos_atencion/' + chatId), {
+            id: chatId,
+            caso_id: casoId,
+            tipo: 'FALLA_ALQUILER',
+            fecha: formatearFechaAhora(),
+            usuario: oldChat.name || 'Sin nombre',
+            telefono: chatId,
+            monto: '12000',
+            observaciones,
+            estado: 'Pendiente',
+          });
+        } catch (e) {
+          console.error('[CASO_ATENCION] Error guardando FALLA_ALQUILER:', e);
+        }
+        
+        const respuesta = `Esto necesita corrección inmediata de nuestro equipo técnico para detener el cobro. Por favor, **llama o escribe ahora mismo al 0412-685-1090** (https://wa.me/584126851090) y te lo resuelven al instante. **Tu caso (ID: ${casoId}) ya está registrado**. ¡Gracias por avisarme! 💚`;
+        
+        await sendWhapi(chatId, respuesta);
+        await saveAgentMessage(db, chatId, respuesta);
+        
+        try {
+          await update(chatEstRef, { estado: { flow: 'menu' } });
+        } catch (e) {}
+        
+        return NextResponse.json({ success: true });
+      }
+      
+      if (clasificacion === 'cupón_1200') {
+        // Flujo 1.B: Cupón CHARGE_GO (1200 Bs)
+        const casoId = generarCasoId();
+        const observaciones = 'Cupón CHARGE_GO entregado — 30 min';
+        
+        try {
+          await set(ref(db, 'casos_atencion/' + chatId), {
+            id: chatId,
+            caso_id: casoId,
+            tipo: 'CUPON_CHARGE_GO',
+            fecha: formatearFechaAhora(),
+            usuario: oldChat.name || 'Sin nombre',
+            telefono: chatId,
+            monto: '1200',
+            observaciones,
+            estado: 'Atendido',
+          });
+        } catch (e) {
+          console.error('[CASO_ATENCION] Error guardando CUPON_CHARGE_GO:', e);
+        }
+        
+        const respuesta = `Ese monto de **1.200 Bs** no corresponde al depósito de garantía (que es de **12.000 Bs**), por eso no te lo reconoce. Pero ¡no te preocupes! Ya te lo convertí en un **cupón de 30 minutos gratis** 😊.
+Para usarlo:
+1. Abre la app.
+2. Ve al **menú** (arriba a la derecha).
+3. Toca en **'Cupones'**.
+4. Selecciona **'Agregar código promocional'** y escribe: \`CHARGE_GO\`.
+5. Presiona **'Agregar código promocional**.
+Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de garantía. **Lo único que cambia es que esos 30 minutos no te descuentan saldo, sino que consumen el cupón**. **Tu caso (ID: ${casoId}) ya está registrado**. ¡Listo! Cualquier duda, me dices. 💚`;
+        
+        await sendWhapi(chatId, respuesta);
+        await saveAgentMessage(db, chatId, respuesta);
+        
+        try {
+          await update(chatEstRef, { estado: { flow: 'menu' } });
+        } catch (e) {}
+        
+        return NextResponse.json({ success: true });
+      }
+      
+      if (clasificacion === 'reembolso_real') {
+        // Flujo 2.B: Reembolso real (1201-11999 Bs) - cambiar a flujo reembolso
+        try {
+          await update(chatEstRef, { estado: { flow: 'reembolso', montoReembolso: monto } });
+        } catch (e) {}
+        activeFlow = 'reembolso';
+        // Continuar al flujo de reembolso normal (dejar que la IA maneje)
+      }
+      
+      if (clasificacion === 'fuera_rango') {
+        const respuesta = 'Ese monto no entra en los rangos de reembolso estándar. ¿Podrías confirmar el monto exacto o contarme qué pasó? 🤔';
+        await sendWhapi(chatId, respuesta);
+        await saveAgentMessage(db, chatId, respuesta);
+        return NextResponse.json({ success: true });
+      }
+    }
+
+    // --- FLUJO: publicidad_dooh ---
+    if (activeFlow === 'publicidad_dooh') {
+      // Verificar si ya tenemos marca y plan en el estado
+      let chatEstado: any = {};
+      try {
+        const estSnap = await get(chatEstRef);
+        chatEstado = estSnap.val()?.estado || {};
+      } catch (e) {}
+      
+      if (!chatEstado.marca || !chatEstado.plan) {
+        // Paso 1: Pedir marca y plan
+        const pregunta = `¡Qué bien! 😊 Las pantallas de VOLTAJE PLUS están en estaciones de alto tráfico. Tenemos planes:
+- **Estándar 24**: 24 exposiciones/día
+- **Premium 43**: 43 exposiciones/día
+- **Dominancia Exclusiva**: 100% de la pantalla
+¿Qué marca/empresa quieres publicitar y qué plan te interesa?`;
+        
+        await sendWhapi(chatId, pregunta);
+        await saveAgentMessage(db, chatId, pregunta);
+        
+        try {
+          await update(chatEstRef, { estado: { flow: 'publicidad_dooh', waitingFor: 'marca_plan' } });
+        } catch (e) {}
+        return NextResponse.json({ success: true });
+      }
+      
+      // Paso 2: Usuario ya dio marca y plan - guardar caso
+      const casoId = generarCasoId();
+      const observaciones = `Marca/empresa: ${chatEstado.marca || 'no especificada'}. Plan: ${chatEstado.plan || 'sin definir'}.`;
+      
+      try {
+        await set(ref(db, 'casos_atencion/' + chatId), {
+          id: chatId,
+          caso_id: casoId,
+          tipo: 'PUBLICIDAD_DOOH',
+          fecha: formatearFechaAhora(),
+          usuario: oldChat.name || 'Sin nombre',
+          telefono: chatId,
+          observaciones,
+          estado: 'Pendiente',
+        });
+      } catch (e) {
+        console.error('[CASO_ATENCION] Error guardando PUBLICIDAD_DOOH:', e);
+      }
+      
+      const respuesta = `¡Listo! Tu solicitud (ID: ${casoId}) está registrada. Te contactaremos para cerrar detalles. 💚`;
+      await sendWhapi(chatId, respuesta);
+      await saveAgentMessage(db, chatId, respuesta);
+      
+      try {
+        await update(chatEstRef, { estado: { flow: 'menu' } });
+      } catch (e) {}
+      
+      return NextResponse.json({ success: true });
+    }
+
+    // --- FLUJO: estacion_gratis ---
+    if (activeFlow === 'estacion_gratis') {
+      let chatEstado: any = {};
+      try {
+        const estSnap = await get(chatEstRef);
+        chatEstado = estSnap.val()?.estado || {};
+      } catch (e) {}
+      
+      if (!chatEstado.negocio || !chatEstado.zona) {
+        // Paso 1: Pedir negocio y zona
+        const pregunta = `¡Genial! 😊 Una estación gratis atrae clientes y no te cuesta nada. ¿Cuál es el nombre de tu negocio y en qué zona/dirección está?`;
+        
+        await sendWhapi(chatId, pregunta);
+        await saveAgentMessage(db, chatId, pregunta);
+        
+        try {
+          await update(chatEstRef, { estado: { flow: 'estacion_gratis', waitingFor: 'negocio_zona' } });
+        } catch (e) {}
+        return NextResponse.json({ success: true });
+      }
+      
+      // Paso 2: Guardar caso
+      const casoId = generarCasoId();
+      const observaciones = `Negocio: ${chatEstado.negocio}. Dirección/zona: ${chatEstado.zona}.`;
+      
+      try {
+        await set(ref(db, 'casos_atencion/' + chatId), {
+          id: chatId,
+          caso_id: casoId,
+          tipo: 'ESTACION_GRATIS',
+          fecha: formatearFechaAhora(),
+          usuario: chatEstado.negocio,
+          telefono: chatId,
+          observaciones,
+          estado: 'Pendiente',
+        });
+      } catch (e) {
+        console.error('[CASO_ATENCION] Error guardando ESTACION_GRATIS:', e);
+      }
+      
+      const respuesta = `¡Perfecto! Tu solicitud (ID: ${casoId}) está registrada. Un asesor te contactará para coordinar la instalación. 💚`;
+      await sendWhapi(chatId, respuesta);
+      await saveAgentMessage(db, chatId, respuesta);
+      
+      try {
+        await update(chatEstRef, { estado: { flow: 'menu' } });
+      } catch (e) {}
+      
+      return NextResponse.json({ success: true });
+    }
+
+    // --- FLUJO: estacion_evento ---
+    if (activeFlow === 'estacion_evento') {
+      let chatEstado: any = {};
+      try {
+        const estSnap = await get(chatEstRef);
+        chatEstado = estSnap.val()?.estado || {};
+      } catch (e) {}
+      
+      const necesita = ['tipoEvento', 'fecha', 'ubicacion', 'asistentes'].filter(k => !chatEstado[k]);
+      
+      if (necesita.length > 0) {
+        // Paso 1 o intermedio: Pedir datos faltantes
+        let pregunta = '';
+        if (necesita.length === 4) {
+          pregunta = `¡Claro! 😊 Para tu evento necesito: **tipo de evento**, **fecha(s)**, **ubicación** y **número de asistentes aprox.**`;
+        } else {
+          const labels: Record<string, string> = {
+            tipoEvento: 'tipo de evento',
+            fecha: 'fecha(s)',
+            ubicacion: 'ubicación',
+            asistentes: 'número de asistentes aprox.',
+          };
+          pregunta = `Me falta: ${necesita.map(k => labels[k]).join(', ')}. ¿Me los das? 😊`;
+        }
+        
+        await sendWhapi(chatId, pregunta);
+        await saveAgentMessage(db, chatId, pregunta);
+        
+        try {
+          await update(chatEstRef, { estado: { flow: 'estacion_evento', waitingFor: 'datos_evento' } });
+        } catch (e) {}
+        return NextResponse.json({ success: true });
+      }
+      
+      // Paso 2: Guardar caso
+      const casoId = generarCasoId();
+      const observaciones = `Tipo de evento: ${chatEstado.tipoEvento}. Fecha(s): ${chatEstado.fecha}. Ubicación: ${chatEstado.ubicacion}. Asistentes: ${chatEstado.asistentes}.`;
+      
+      try {
+        await set(ref(db, 'casos_atencion/' + chatId), {
+          id: chatId,
+          caso_id: casoId,
+          tipo: 'ESTACION_EVENTO',
+          fecha: formatearFechaAhora(),
+          usuario: oldChat.name || 'Sin nombre',
+          telefono: chatId,
+          observaciones,
+          estado: 'Pendiente',
+        });
+      } catch (e) {
+        console.error('[CASO_ATENCION] Error guardando ESTACION_EVENTO:', e);
+      }
+      
+      const respuesta = `¡Listo! Tu solicitud (ID: ${casoId}) está registrada. Te contactaremos con disponibilidad y costos. 💚`;
+      await sendWhapi(chatId, respuesta);
+      await saveAgentMessage(db, chatId, respuesta);
+      
+      try {
+        await update(chatEstRef, { estado: { flow: 'menu' } });
+      } catch (e) {}
+      
+      return NextResponse.json({ success: true });
+    }
+
+    // --- FLUJO: agente_humano ---
+    if (activeFlow === 'agente_humano') {
+      let chatEstado: any = {};
+      try {
+        const estSnap = await get(chatEstRef);
+        chatEstado = estSnap.val()?.estado || {};
+      } catch (e) {}
+      
+      if (!chatEstado.nombre || !chatEstado.motivo) {
+        // Paso 1: Pedir nombre y motivo
+        const pregunta = `¡Claro! 😊 Para conectarte con un compañero, dime brevemente: **tu nombre** y **el motivo**.`;
+        
+        await sendWhapi(chatId, pregunta);
+        await saveAgentMessage(db, chatId, pregunta);
+        
+        try {
+          await update(chatEstRef, { estado: { flow: 'agente_humano', waitingFor: 'nombre_motivo' } });
+        } catch (e) {}
+        return NextResponse.json({ success: true });
+      }
+      
+      // Paso 2: Guardar caso (Estado = Atendido)
+      const casoId = generarCasoId();
+      const observaciones = `Motivo: ${chatEstado.motivo}.`;
+      
+      try {
+        await set(ref(db, 'casos_atencion/' + chatId), {
+          id: chatId,
+          caso_id: casoId,
+          tipo: 'AGENTE_HUMANO',
+          fecha: formatearFechaAhora(),
+          usuario: chatEstado.nombre,
+          telefono: chatId,
+          observaciones,
+          estado: 'Atendido',
+        });
+      } catch (e) {
+        console.error('[CASO_ATENCION] Error guardando AGENTE_HUMANO:', e);
+      }
+      
+      const respuesta = `¡Listo! Tu caso (ID: ${casoId}) está registrado. Te atiende un compañero al **0412-685-1090** (https://wa.me/584126851090). ¡Gracias! 💚`;
+      await sendWhapi(chatId, respuesta);
+      await saveAgentMessage(db, chatId, respuesta);
+      
+      try {
+        await update(chatEstRef, { estado: { flow: 'menu' } });
+      } catch (e) {}
+      
+      return NextResponse.json({ success: true });
+    }
+
+    // --- FLUJO: otra_consulta ---
+    if (activeFlow === 'otra_consulta') {
+      const respuesta = `Por este canal solo veo esas 6 opciones. Si es algo distinto, escríbenos al Instagram @voltajeplus o al 0412-685-1090. ¡Gracias! 💚`;
+      await sendWhapi(chatId, respuesta);
+      await saveAgentMessage(db, chatId, respuesta);
+      
+      try {
+        await update(chatEstRef, { estado: { flow: 'menu' } });
+      } catch (e) {}
+      
+      return NextResponse.json({ success: true });
+    }
+
+    // --- CAPTURA DE DATOS PARA FLUJOS DE MÚLTIPLES PASOS ---
+    // Detectar si el usuario está respondiendo con datos para flujos multi-paso
+    const chatEstSnap = await get(chatEstRef);
+    const chatEstData = chatEstSnap.val() || {};
+    const waitingFor = chatEstData.estado?.waitingFor;
+    
+    if (waitingFor) {
+      const userLower = userText.toLowerCase();
+      let updates: any = { estado: { ...chatEstData.estado } };
+      
+      const flow = activeFlow as FlowId;
+      
+      // publicidad_dooh - capturar marca y plan
+      if (flow === 'publicidad_dooh' && waitingFor === 'marca_plan') {
+        // Extraer marca (primeras palabras) y plan (keywords)
+        const planes = ['estandar', 'estándar', 'premium', 'dominancia', 'exclusiva'];
+        let planDetectado = '';
+        for (const p of planes) {
+          if (userLower.includes(p)) { planDetectado = p; break; }
+        }
+        updates.estado.marca = userText.split('\n')[0].trim().slice(0, 100);
+        if (planDetectado) updates.estado.plan = planDetectado;
+        
+        try {
+          await update(chatEstRef, updates);
+        } catch (e) {}
+        // El siguiente mensaje disparará el guardado
+      }
+      
+      // estacion_gratis - capturar negocio y zona
+      if (flow === 'estacion_gratis' && waitingFor === 'negocio_zona') {
+        // Heurística simple: primera línea = negocio, resto = zona
+        const lineas = userText.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        updates.estado.negocio = lineas[0] || userText.slice(0, 100);
+        updates.estado.zona = lineas.slice(1).join(' ') || 'no especificada';
+        
+        try {
+          await update(chatEstRef, updates);
+        } catch (e) {}
+      }
+      
+      // estacion_evento - capturar datos
+      if (flow === 'estacion_evento' && waitingFor === 'datos_evento') {
+        const lineas = userText.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!chatEstData.estado.tipoEvento && lineas[0]) updates.estado.tipoEvento = lineas[0];
+        if (!chatEstData.estado.fecha && lineas[1]) updates.estado.fecha = lineas[1];
+        if (!chatEstData.estado.ubicacion && lineas[2]) updates.estado.ubicacion = lineas[2];
+        if (!chatEstData.estado.asistentes && lineas[3]) updates.estado.asistentes = lineas[3];
+        // También buscar palabras clave
+        if (!updates.estado.fecha && /\d{1,2}[\/\-]\d{1,2}/.test(userText)) {
+          const match = userText.match(/\d{1,2}[\/\-]\d{1,2}/);
+          if (match) updates.estado.fecha = match[0];
+        }
+        
+        try {
+          await update(chatEstRef, updates);
+        } catch (e) {}
+      }
+      
+      // agente_humano - capturar nombre y motivo
+      if (flow === 'agente_humano' && waitingFor === 'nombre_motivo') {
+        const lineas = userText.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        updates.estado.nombre = lineas[0] || userText.slice(0, 50);
+        updates.estado.motivo = lineas.slice(1).join(' ') || userText.slice(50) || 'no especificado';
+        
+        try {
+          await update(chatEstRef, updates);
+        } catch (e) {}
+      }
+    }
+
     // Persistimos el flujo actual para la siguiente iteraciÃ³n (best-effort).
     try {
       await update(chatEstRef, { estado: { flow: activeFlow } });
@@ -812,6 +1244,28 @@ export async function POST(req: NextRequest) {
         };
         await set(ref(db, 'casos_reembolso/' + chatId), newCaso);
         console.log('[DB] Caso guardado/actualizado:', casoId, '| cuenta 20 digitos:', cuentaCompleta, '| pendiente correccion:', newCaso.extraccion.cuenta_pendiente_correccion, '| actualizada:', newCaso.extraccion.cuenta_actualizada);
+
+        // También guardar en la nueva tabla unificada "casos_atencion" para reembolsos
+        if (!isCuponCase) {
+          try {
+            await set(ref(db, 'casos_atencion/' + chatId), {
+              id: chatId,
+              caso_id: casoId,
+              tipo: 'REEMBOLSO',
+              fecha: formatearFechaAhora(),
+              usuario: newCaso.datos_usuario.nombre_completo || oldChat.name || 'Sin nombre',
+              cedula: newCaso.datos_usuario.cedula,
+              telefono: chatId,
+              cuenta: newCaso.datos_usuario.numero_cuenta + (newCaso.datos_usuario.tipo_cuenta ? ` (${newCaso.datos_usuario.tipo_cuenta})` : ''),
+              ubicacion: newCaso.datos_usuario.ubicacion_estacion,
+              monto: finalMonto,
+              observaciones: `Motivo: ${observaciones || 'Reembolso por falla/cargo indebido'}.`,
+              estado: 'Pendiente',
+            });
+          } catch (e) {
+            console.error('[CASO_ATENCION] Error guardando REEMBOLSO:', e);
+          }
+        }
 
         // Si la cuenta no está completa (y detectamos algunos dígitos), avisar al
         // usuario con el conteo exacto para que corrija. Solo la primera vez que

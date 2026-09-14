@@ -51,7 +51,7 @@ export const useStore = create<AppState & { subscribeToDB: () => void }>((set, g
     const db = getFirebaseDB();
     
     // Listen to all chats
-    onValue(ref(db, 'chats'), (snapshot) => {
+    onValue(ref(db, 'chats'), (snapshot: any) => {
       const data = snapshot.val();
       if (data) {
         const chatsArray: Chat[] = Object.entries(data).map(([id, chatData]: [string, any]) => ({
@@ -72,7 +72,7 @@ export const useStore = create<AppState & { subscribeToDB: () => void }>((set, g
     });
 
     // Listen to all messages
-    onValue(ref(db, 'messages'), (snapshot) => {
+    onValue(ref(db, 'messages'), (snapshot: any) => {
       const data = snapshot.val();
       if (data) {
         const parsedMessages: Record<string, Message[]> = {};
