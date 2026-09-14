@@ -1064,27 +1064,105 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       
       // publicidad_dooh - capturar marca y plan
       if (flow === 'publicidad_dooh' && waitingFor === 'marca_plan') {
-        // Extraer marca (primeras palabras) y plan (keywords)
+        // Extraer marca y plan del texto natural
+        // Ej: "Mi marca es CocaCola, quiero el plan Premium"
+        // Ej: "Empresa: Nike, Plan: Estándar 24"
+        // Ej: "Quiero publicidad para mi negocio X en el plan Dominancia Exclusiva"
+        let marca = '';
+        let plan = '';
+        
+        const text = userText.trim();
+        const lower = text.toLowerCase();
+        
+        // Detectar plan por palabras clave
         const planes = ['estandar', 'estándar', 'premium', 'dominancia', 'exclusiva'];
-        let planDetectado = '';
         for (const p of planes) {
-          if (userLower.includes(p)) { planDetectado = p; break; }
+          if (lower.includes(p)) { 
+            plan = p.charAt(0).toUpperCase() + p.slice(1);
+            break; 
+          }
         }
-        updates.estado.marca = userText.split('\n')[0].trim().slice(0, 100);
-        if (planDetectado) updates.estado.plan = planDetectado;
+        
+        // Patrones para extraer marca
+        const marcaPatterns = [
+          /(?:marca|empresa|negocio|brand)\s*(?:es|:|se llama)\s*([^,.\n]+)/i,
+          /^(?:para|quiero).*?(?:mi\s+)?(?:marca|empresa|negocio)\s+([^,.\n]+)/i,
+          /^([^,.\n]+?)(?:\s*,\s*(?:plan|quiero|estandar|premium|dominancia))/i,
+        ];
+        
+        for (const pattern of marcaPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) {
+            marca = match[1].trim();
+            break;
+          }
+        }
+        
+        // Fallback: primera línea o todo el texto
+        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!marca) marca = lineas[0] || text.slice(0, 100);
+        if (!plan) plan = 'sin definir';
+        
+        updates.estado.marca = marca.slice(0, 100);
+        updates.estado.plan = plan;
         
         try {
           await update(chatEstRef, updates);
         } catch (e) {}
-        // El siguiente mensaje disparará el guardado
       }
       
       // estacion_gratis - capturar negocio y zona
       if (flow === 'estacion_gratis' && waitingFor === 'negocio_zona') {
-        // Heurística simple: primera línea = negocio, resto = zona
-        const lineas = userText.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        updates.estado.negocio = lineas[0] || userText.slice(0, 100);
-        updates.estado.zona = lineas.slice(1).join(' ') || 'no especificada';
+        // Extraer negocio y zona del texto natural
+        // Ej: "El nombre de mi negocio es Pepe trueno motora, se ubica en Montalban"
+        // Ej: "Mi negocio se llama X, está en Y"
+        // Ej: "Negocio: X, Zona: Y"
+        let negocio = '';
+        let zona = '';
+        
+        const text = userText.trim();
+        
+        // Patrones para extraer nombre del negocio
+        const negocioPatterns = [
+          /(?:negocio|negocio se llama|negocio es|se llama|me llamo|mi negocio)\s*(?:es|:)\s*([^,.\n]+)/i,
+          /^([^,.\n]+?)(?:\s*,\s*(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n))/i,
+        ];
+        
+        for (const pattern of negocioPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) {
+            negocio = match[1].trim();
+            break;
+          }
+        }
+        
+        // Si no encontró con patrones, usar primera parte antes de coma/punto
+        if (!negocio) {
+          const partes = text.split(/[,.]/);
+          negocio = partes[0].replace(/^(?:el nombre de mi negocio es|mi negocio se llama|mi negocio es|negocio|se llama)\s*/i, '').trim();
+        }
+        
+        // Patrones para extraer zona/ubicación
+        const zonaPatterns = [
+          /(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n)\s*(?:es|:|en)\s*([^,.\n]+)/i,
+          /(?:en|zona|direcci[oó]n)\s+([^,.\n]+)$/i,
+        ];
+        
+        for (const pattern of zonaPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) {
+            zona = match[1].trim();
+            break;
+          }
+        }
+        
+        // Si hay múltiples líneas, usar heurística original como fallback
+        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!negocio && lineas[0]) negocio = lineas[0];
+        if (!zona && lineas.length > 1) zona = lineas.slice(1).join(' ');
+        
+        updates.estado.negocio = negocio.slice(0, 100) || text.slice(0, 100);
+        updates.estado.zona = zona || 'no especificada';
         
         try {
           await update(chatEstRef, updates);
@@ -1093,15 +1171,58 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       
       // estacion_evento - capturar datos
       if (flow === 'estacion_evento' && waitingFor === 'datos_evento') {
-        const lineas = userText.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        if (!chatEstData.estado.tipoEvento && lineas[0]) updates.estado.tipoEvento = lineas[0];
-        if (!chatEstData.estado.fecha && lineas[1]) updates.estado.fecha = lineas[1];
-        if (!chatEstData.estado.ubicacion && lineas[2]) updates.estado.ubicacion = lineas[2];
-        if (!chatEstData.estado.asistentes && lineas[3]) updates.estado.asistentes = lineas[3];
-        // También buscar palabras clave
-        if (!updates.estado.fecha && /\d{1,2}[\/\-]\d{1,2}/.test(userText)) {
-          const match = userText.match(/\d{1,2}[\/\-]\d{1,2}/);
-          if (match) updates.estado.fecha = match[0];
+        // Extraer tipo, fecha, ubicación, asistentes del texto natural
+        // Ej: "Es una boda el 15/12 en Caracas para 200 personas"
+        // Ej: "Tipo: conferencia, Fecha: 20/01, Ubicación: CCCT, Asistentes: 500"
+        // Ej: "Evento: fiesta de 15 años, 10 de marzo, Hotel Marriott, 150 invitados"
+        
+        const text = userText.trim();
+        const lower = text.toLowerCase();
+        
+        // Detectar fecha (dd/mm, dd-mm, dd/mm/yyyy, etc)
+        if (!updates.estado.fecha) {
+          const fechaMatch = text.match(/\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?/);
+          if (fechaMatch) updates.estado.fecha = fechaMatch[0];
+        }
+        
+        // Detectar asistentes (número + palabras clave)
+        if (!updates.estado.asistentes) {
+          const asistentesMatch = lower.match(/(\d{1,4})\s*(?:personas?|invitados?|asistentes?|gente)/);
+          if (asistentesMatch) updates.estado.asistentes = asistentesMatch[1];
+          // También buscar "para X personas"
+          const paraMatch = lower.match(/para\s+(\d{1,4})\s*(?:personas?|invitados?)/);
+          if (paraMatch) updates.estado.asistentes = paraMatch[1];
+        }
+        
+        // Detectar ubicación (palabras clave de lugar)
+        if (!updates.estado.ubicacion) {
+          const ubicacionPatterns = [
+            /(?:en|ubicad[ao]|lugar|sitio|direcci[oó]n|zona)\s*(?:es|:|en)\s*([^,.\n]+)/i,
+            /(?:en|en el|en la)\s+([^,.\n]+)(?:\s+(?:para|con|el|la|\.|$))/i,
+          ];
+          for (const pattern of ubicacionPatterns) {
+            const match = text.match(pattern);
+            if (match && match[1]) {
+              updates.estado.ubicacion = match[1].trim();
+              break;
+            }
+          }
+        }
+        
+        // Detectar tipo de evento (primeras palabras o palabras clave)
+        if (!updates.estado.tipoEvento) {
+          const tipoKeywords = ['boda', 'fiesta', 'conferencia', 'congreso', 'feria', 'cumpleaños', 'quince', '15 años', 'graduación', 'empresarial', 'corporativo', 'show', 'concierto', 'festival'];
+          for (const kw of tipoKeywords) {
+            if (lower.includes(kw)) {
+              updates.estado.tipoEvento = kw;
+              break;
+            }
+          }
+          // Si no encontró keyword, usar primera parte del texto
+          if (!updates.estado.tipoEvento) {
+            const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+            updates.estado.tipoEvento = lineas[0]?.slice(0, 50) || text.slice(0, 50);
+          }
         }
         
         try {
@@ -1111,9 +1232,53 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       
       // agente_humano - capturar nombre y motivo
       if (flow === 'agente_humano' && waitingFor === 'nombre_motivo') {
-        const lineas = userText.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        updates.estado.nombre = lineas[0] || userText.slice(0, 50);
-        updates.estado.motivo = lineas.slice(1).join(' ') || userText.slice(50) || 'no especificado';
+        // Extraer nombre y motivo del texto natural
+        // Ej: "Me llamo Juan, quiero hablar por un problema con mi factura"
+        // Ej: "Nombre: María, Motivo: consulta sobre publicidad"
+        // Ej: "Soy Pedro y necesito ayuda con un reembolso"
+        
+        const text = userText.trim();
+        const lower = text.toLowerCase();
+        
+        let nombre = '';
+        let motivo = '';
+        
+        // Patrones para nombre
+        const nombrePatterns = [
+          /(?:me llamo|soy|mi nombre es|nombre)\s*(?:es|:)\s*([^,.\n]+)/i,
+          /^([^,.\n]+?)(?:\s*(?:y|,)\s*(?:quiero|necesito|motivo|trabajo))/i,
+        ];
+        
+        for (const pattern of nombrePatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) {
+            nombre = match[1].trim();
+            break;
+          }
+        }
+        
+        // Patrones para motivo
+        const motivoPatterns = [
+          /(?:motivo|porque|por qué|raz[oó]n)\s*(?:es|:)\s*([^,.\n]+)/i,
+          /(?:quiero|necesito|busco)\s+(?:hablar|ayuda|ayuda con|resolver)\s+([^,.\n]+)/i,
+          /(?:y|,)\s*(?:quiero|necesito|motivo|busco)\s+([^,.\n]+)/i,
+        ];
+        
+        for (const pattern of motivoPatterns) {
+          const match = text.match(pattern);
+          if (match && match[1]) {
+            motivo = match[1].trim();
+            break;
+          }
+        }
+        
+        // Fallback: usar líneas separadas
+        const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
+        if (!nombre) nombre = lineas[0] || text.slice(0, 50);
+        if (!motivo) motivo = lineas.slice(1).join(' ') || text.slice(nombre.length).slice(0, 100) || 'no especificado';
+        
+        updates.estado.nombre = nombre.slice(0, 50);
+        updates.estado.motivo = motivo.slice(0, 200);
         
         try {
           await update(chatEstRef, updates);
