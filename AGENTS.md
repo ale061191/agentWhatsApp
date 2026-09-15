@@ -37,6 +37,7 @@ El archivo `src/app/api/webhook/route.ts` es crítico. Preguntar antes de cualqu
 - `chats/{chatId}` — metadatos (phone, name, aiEnabled, imageCount, etc.)
 - `system/prompt` — prompt personalizado de Sonia (opcional)
 - `casos_reembolso/{chatId}` — casos de reembolso extraídos automáticamente
+- `casos_atencion/{chatId}` — casos unificados (FALLA_ALQUILER, CUPON_CHARGE_GO, REEMBOLSO, PUBLICIDAD_DOOH, ESTACION_GRATIS, ESTACION_EVENTO, AGENTE_HUMANO)
 
 ### Cadena del System Prompt
 1. Webhook intenta leer `system/prompt` de Firebase
@@ -51,8 +52,16 @@ El archivo `src/app/api/webhook/route.ts` es crítico. Preguntar antes de cualqu
 - Guarda en `casos_reembolso/{chatId}` con `estado_caso: 'pendiente_validacion'`
 
 ### Firebase Rules — Gotcha conocido
-Para poder leer listas (`chats/`, `messages/`, `casos_reembolso/`), se necesita `".read": true` a nivel del padre, no solo en el wildcard `$chatId`.
+Para poder leer listas (`chats/`, `messages/`, `casos_reembolso/`, `casos_atencion/`), se necesita `".read": true` a nivel del padre, no solo en el wildcard `$chatId`.
 El path `locks/{chatId}` también debe estar en las reglas (`.read` + `.write`) para que el debounce lock funcione.
+⚠️ Incidente 15/09/2026: el modal Casos Atención daba HTTP 500 porque las rules publicadas NO tenían el nodo `casos_atencion` (se creó con el código nuevo y nunca se agregó). Todo lo demás cargaba (chats 60KB, reembolsos 40KB). Fix: agregar `"casos_atencion": { ".read": true, "$chatId": { ".write": true } }` y Publish. Los casos generados mientras faltaba la rule NO se recuperan (el webhook falla en silencio y avisa ID igual).
+
+## Infraestructura — Proyecto Firebase y Vercel de Sonia (verificado 15/09/2026)
+- **Firebase (base viva): proyecto `nova-tech-ai-a78bc`**, instancia `nova-tech-ai-a78bc-default-rtdb` (us-central1).
+  Host REST: `https://nova-tech-ai-a78bc-default-rtdb.firebaseio.com`. Verificado en el bundle de producción (`/_next/static/chunks/app/page-*.js` contiene ese host) y por REST: `chats` 200 (206 claves), `casos_reembolso` 200 (72 claves).
+- **Proyectos que NO usa Sonia:** `nova-tech-agent` (sus rules de prueba vencieron el 04/07/2026, DB cerrada) y `voltajevzla-25454` (solo visible con la cuenta voltajevzla@gmail.com).
+- **Vercel:** scope `alejandro-rodriguezs-projects-7f9b525c`, proyecto `agent-whats-app`, prod `https://agent-whats-app.vercel.app`. Diagnóstico rápido sin secrets: `GET /api/db?action=getChats` debe dar 200; si `getCasosAtencion` da 500, es rules.
+- CLIs en esta máquina: `vercel` logueado como `ale061191`; `firebase` logueado como `voltajevzla@gmail.com` (ese login SOLO ve `voltajevzla-25454`, NO ve `nova-tech-ai-a78bc`). `firebase login` no funciona en shell no-interactiva.
 
 ## Comandos
 ```bash

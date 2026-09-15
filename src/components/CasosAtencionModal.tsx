@@ -64,7 +64,7 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
       const data = await resCasos.json();
       if (data.casos) {
         const arr: CasoAtencion[] = Object.entries(data.casos).map(([id, caso]: [string, any]) => ({ id, ...caso }));
-        arr.sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
+        arr.sort((a, b) => (parseFechaCaso(b.fecha)?.getTime() || 0) - (parseFechaCaso(a.fecha)?.getTime() || 0));
         setCasos(arr);
         // Métricas: preferir servidor, fallback a cálculo local
         try {
@@ -122,10 +122,21 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
     return map[tipo || ''] || tipo || '-';
   };
 
+  const parseFechaCaso = (dateStr?: string): Date | null => {
+    if (!dateStr) return null;
+    // Formato guardado por el webhook: "DD/MM/YYYY HH:MM" (no lo parsea new Date).
+    const m = String(dateStr).match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+    if (m) return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || '0'), +(m[5] || '0'));
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
   const formatDate = (dateStr?: string) => {
     if (!dateStr) return '-';
+    const d = parseFechaCaso(dateStr);
+    if (!d) return dateStr;
     try {
-      return new Date(dateStr).toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return d.toLocaleDateString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch {
       return dateStr;
     }
@@ -133,8 +144,8 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
 
   const filterByDate = (caso: CasoAtencion): boolean => {
     if (dateFilter === 'all') return true;
-    if (!caso.fecha) return false;
-    const d = new Date(caso.fecha);
+    const d = parseFechaCaso(caso.fecha);
+    if (!d) return false;
     const now = new Date();
     if (dateFilter === 'today') return d.toDateString() === now.toDateString();
     if (dateFilter === 'week') { const w = new Date(now); w.setDate(w.getDate() - 7); return d >= w; }
@@ -180,12 +191,32 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
     if (deletingId) return;
     setDeletingId(casoId);
     try {
-      // No endpoint for delete casos_atencion, just remove locally for UI
+      await fetch('/api/db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'deleteCasoAtencion', chatId: casoId }) });
       setCasos(prev => prev.filter(c => c.id !== casoId));
     } catch (e) {
       console.error('Error deleting caso:', e);
     } finally {
       setDeletingId(null);
+    }
+  };
+
+  const isAtendido = (caso: CasoAtencion) => (caso.estado || 'Pendiente').toLowerCase() === 'atendido';
+
+  const handleToggleAtendido = async (casoId: string, currentlyAtendido: boolean) => {
+    const newEstado = currentlyAtendido ? 'Pendiente' : 'Atendido';
+    setCasos(prev => prev.map(c => c.id === casoId ? { ...c, estado: newEstado } : c));
+    setMetricas(prev => {
+      if (!prev) return prev;
+      const pen = (prev.porEstado['pendiente'] || 0) + (currentlyAtendido ? 1 : -1);
+      const ate = (prev.porEstado['atendido'] || 0) + (currentlyAtendido ? -1 : 1);
+      return { ...prev, porEstado: { ...prev.porEstado, pendiente: Math.max(0, pen), atendido: Math.max(0, ate) } };
+    });
+    try {
+      await fetch('/api/db', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'updateCasoAtencion', chatId: casoId, updates: { estado: newEstado } }) });
+    } catch (e) {
+      console.error('Error updating atendido:', e);
+      const oldEstado = currentlyAtendido ? 'Atendido' : 'Pendiente';
+      setCasos(prev => prev.map(c => c.id === casoId ? { ...c, estado: oldEstado } : c));
     }
   };
 
@@ -200,6 +231,7 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
       'Monto': caso.monto || '-',
       'Observaciones': caso.observaciones || '-',
       'Estado': caso.estado || '-',
+      'Atendido': isAtendido(caso) ? 'Sí' : 'No',
     }));
     const ws = XLSX.utils.json_to_sheet(data);
     const colWidths = Object.keys(data[0]).map(key => ({ wch: Math.max(key.length + 2, ...data.map(r => String((r as any)[key]).length + 2)) }));
@@ -241,39 +273,39 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
         </div>
 
         {showMetricas && metricas && (
-          <div className="border-b border-[rgba(37,211,102,0.1)] shrink-0 bg-[#0d0f12]" style={{ padding: '16px 28px' }}>
-            <div className="flex flex-wrap gap-3">
-              <div className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10 min-w-[130px]">
-                <p className="text-[11px] uppercase tracking-widest text-gray-500">Total</p>
-                <p className="text-xl font-bold text-white">{metricas.total}</p>
+          <div className="border-b border-[rgba(37,211,102,0.1)] shrink-0 bg-[#0d0f12]" style={{ padding: '20px 28px' }}>
+            <div className="flex flex-wrap gap-4">
+              <div className="rounded-xl bg-white/[0.03] border border-white/10 min-w-[150px] flex flex-col justify-center gap-1.5" style={{ padding: '16px 22px' }}>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">Total</p>
+                <p className="text-2xl font-bold text-white leading-none">{metricas.total}</p>
               </div>
-              <div className="px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 min-w-[130px]">
-                <p className="text-[11px] uppercase tracking-widest text-yellow-500/80">Pendientes</p>
-                <p className="text-xl font-bold text-yellow-400">{metricas.porEstado['pendiente'] || 0}</p>
+              <div className="rounded-xl bg-yellow-500/10 border border-yellow-500/20 min-w-[150px] flex flex-col justify-center gap-1.5" style={{ padding: '16px 22px' }}>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-yellow-500/80">Pendientes</p>
+                <p className="text-2xl font-bold text-yellow-400 leading-none">{metricas.porEstado['pendiente'] || 0}</p>
               </div>
-              <div className="px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 min-w-[130px]">
-                <p className="text-[11px] uppercase tracking-widest text-emerald-500/80">Atendidos</p>
-                <p className="text-xl font-bold text-emerald-400">{metricas.porEstado['atendido'] || 0}</p>
+              <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 min-w-[150px] flex flex-col justify-center gap-1.5" style={{ padding: '16px 22px' }}>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-emerald-500/80">Atendidos</p>
+                <p className="text-2xl font-bold text-emerald-400 leading-none">{metricas.porEstado['atendido'] || 0}</p>
               </div>
-              <div className="flex-1 min-w-[220px] px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
-                <p className="text-[11px] uppercase tracking-widest text-gray-500 mb-2">Por tipo</p>
+              <div className="flex-1 min-w-[240px] rounded-xl bg-white/[0.03] border border-white/10 flex flex-col justify-center gap-2.5" style={{ padding: '16px 22px' }}>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">Por tipo</p>
                 <div className="flex flex-wrap gap-2">
                   {Object.entries(metricas.porTipo).map(([tipo, n]) => (
-                    <span key={tipo} className="text-xs px-2.5 py-1 rounded-full bg-[#25d366]/10 border border-[#25d366]/25 text-[#25d366]">
+                    <span key={tipo} className="text-xs rounded-full bg-[#25d366]/10 border border-[#25d366]/25 text-[#25d366]" style={{ padding: '5px 12px' }}>
                       {getTipoLabel(tipo)}: <b>{n}</b>
                     </span>
                   ))}
                   {Object.keys(metricas.porTipo).length === 0 && <span className="text-xs text-gray-600">Sin datos</span>}
                 </div>
               </div>
-              <div className="flex-1 min-w-[220px] px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
-                <p className="text-[11px] uppercase tracking-widest text-gray-500 mb-2">Últimos días</p>
-                <div className="flex items-end gap-1.5 h-[42px]">
+              <div className="flex-1 min-w-[240px] rounded-xl bg-white/[0.03] border border-white/10 flex flex-col justify-center gap-2.5" style={{ padding: '16px 22px' }}>
+                <p className="text-[11px] uppercase tracking-[0.15em] text-gray-500">Últimos días</p>
+                <div className="flex items-end gap-2.5" style={{ height: '48px' }}>
                   {Object.entries(metricas.porDia).slice(-7).map(([dia, n]) => {
                     const max = Math.max(1, ...Object.values(metricas.porDia));
                     const h = Math.max(6, Math.round((n / max) * 36));
                     return (
-                      <div key={dia} className="flex flex-col items-center gap-1" title={`${dia}: ${n}`}>
+                      <div key={dia} className="flex flex-col items-center justify-end gap-1.5" title={`${dia}: ${n}`}>
                         <div className="w-6 rounded bg-[#25d366]/60" style={{ height: `${h}px` }} />
                         <span className="text-[10px] text-gray-500">{dia.slice(0, 5)}</span>
                       </div>
@@ -387,7 +419,7 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
             <table className="w-full text-sm" style={{ borderSpacing: '0 4px', borderCollapse: 'separate' }}>
               <thead className="sticky top-0 bg-[#111317] z-10">
                 <tr>
-                  {['ID', 'FECHA', 'USUARIO', 'TELÉFONO', 'TIPO', 'MONTO', 'OBSERVACIONES', 'ESTADO'].map(h => (
+                  {['ID', 'FECHA', 'USUARIO', 'TELÉFONO', 'TIPO', 'MONTO', 'OBSERVACIONES', 'ESTADO', 'ATENDIDO'].map(h => (
                     <th key={h} className="text-left text-[11px] text-gray-500 font-semibold uppercase tracking-widest" style={{ padding: '14px 14px' }}>{h}</th>
                   ))}
                 </tr>
@@ -411,8 +443,22 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
                     </td>
                     <td className="text-center" style={{ padding: '14px' }}>
                       <span className={`inline-block rounded-full text-xs border font-semibold ${getEstadoColor(caso)}`} style={{ padding: '4px 12px' }}>
-                        {caso.estado || 'Pendiente'}
+                        {isAtendido(caso) ? '✅ Atendido' : (caso.estado || 'Pendiente')}
                       </span>
+                    </td>
+                    <td className="text-center" style={{ padding: '14px' }}>
+                      <label className="inline-flex items-center justify-center cursor-pointer">
+                        <input type="checkbox" checked={isAtendido(caso)}
+                          onChange={() => handleToggleAtendido(caso.id, isAtendido(caso))}
+                          className="sr-only peer" />
+                        <div className="w-[22px] h-[22px] rounded-md border-2 border-gray-600 peer-checked:border-[#25d366] peer-checked:bg-[#25d366] flex items-center justify-center transition-all cursor-pointer">
+                          {isAtendido(caso) && (
+                            <svg className="w-3.5 h-3.5 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </label>
                     </td>
                   </tr>
                 ))}
@@ -441,6 +487,16 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
               className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-all">
               <ChevronRight className="w-4 h-4" />
             </button>
+          </div>
+        )}
+
+        {!loading && casosFiltrados.length > 0 && (
+          <div className="border-t border-[rgba(255,255,255,0.05)] shrink-0 flex items-center justify-between text-xs text-gray-500"
+            style={{ padding: '14px 28px' }}>
+            <span>Mostrando {((safeCurrentPage - 1) * ITEMS_PER_PAGE) + 1}–{Math.min(safeCurrentPage * ITEMS_PER_PAGE, casosFiltrados.length)} de {casosFiltrados.length} casos</span>
+            <div className="flex items-center gap-5">
+              <span className="flex items-center gap-2"><input type="checkbox" className="w-4 h-4 accent-[#25d366]" disabled /> Atendido</span>
+            </div>
           </div>
         )}
       </div>

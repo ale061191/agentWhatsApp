@@ -228,6 +228,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    if (action === 'updateCasoAtencion') {
+      if (!chatId || !body.updates) {
+        return NextResponse.json({ error: 'Missing chatId or updates' }, { status: 400 });
+      }
+      await update(ref(db, `casos_atencion/${chatId}`), body.updates);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === 'deleteCasoAtencion') {
+      if (!chatId) {
+        return NextResponse.json({ error: 'Missing chatId' }, { status: 400 });
+      }
+      await set(ref(db, `casos_atencion/${chatId}`), null);
+      return NextResponse.json({ success: true });
+    }
+
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch (error) {
     console.error('Firebase error:', error);
