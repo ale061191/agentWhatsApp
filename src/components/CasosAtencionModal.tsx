@@ -21,6 +21,13 @@ interface CasoAtencion {
 type DateFilter = 'all' | 'today' | 'week' | 'month' | 'custom';
 type TipoFilter = 'all' | 'FALLA_ALQUILER' | 'CUPON_CHARGE_GO' | 'REEMBOLSO' | 'PUBLICIDAD_DOOH' | 'ESTACION_GRATIS' | 'ESTACION_EVENTO' | 'AGENTE_HUMANO';
 
+interface MetricasAtencion {
+  total: number;
+  porTipo: Record<string, number>;
+  porEstado: Record<string, number>;
+  porDia: Record<string, number>;
+}
+
 export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionModalProps) {
   const [casos, setCasos] = useState<CasoAtencion[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,20 +40,48 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
   const [showTipoDropdown, setShowTipoDropdown] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const [metricas, setMetricas] = useState<MetricasAtencion | null>(null);
+  const [showMetricas, setShowMetricas] = useState(true);
   const ITEMS_PER_PAGE = 10;
 
   const loadCasos = useCallback(async () => {
     if (!isOpen) return;
     setLoading(true);
     try {
-      const response = await fetch('/api/db?action=getCasosAtencion');
-      const data = await response.json();
+      const [resCasos, resMet] = await Promise.all([
+        fetch('/api/db?action=getCasosAtencion'),
+        fetch('/api/db?action=getMetricasAtencion').catch(() => null),
+      ]);
+      const data = await resCasos.json();
       if (data.casos) {
         const arr: CasoAtencion[] = Object.entries(data.casos).map(([id, caso]: [string, any]) => ({ id, ...caso }));
         arr.sort((a, b) => new Date(b.fecha || 0).getTime() - new Date(a.fecha || 0).getTime());
         setCasos(arr);
+        // Métricas: preferir servidor, fallback a cálculo local
+        try {
+          if (resMet) {
+            const mData = await (resMet as Response).json();
+            if (mData.metricas) setMetricas(mData.metricas);
+            else throw new Error('no metricas');
+          } else throw new Error('no res');
+        } catch {
+          const porTipo: Record<string, number> = {};
+          const porEstado: Record<string, number> = {};
+          const porDia: Record<string, number> = {};
+          for (const c of arr) {
+            const t = c.tipo || 'SIN_TIPO';
+            const e = (c.estado || 'Pendiente').toLowerCase();
+            porTipo[t] = (porTipo[t] || 0) + 1;
+            porEstado[e] = (porEstado[e] || 0) + 1;
+            const m = String(c.fecha || '').match(/(\d{2}\/\d{2}\/\d{4})/);
+            const dia = m ? m[1] : 'sin-fecha';
+            porDia[dia] = (porDia[dia] || 0) + 1;
+          }
+          setMetricas({ total: arr.length, porTipo, porEstado, porDia });
+        }
       } else {
         setCasos([]);
+        setMetricas({ total: 0, porTipo: {}, porEstado: {}, porDia: {} });
       }
     } catch (e) {
       console.error('Error loading casos:', e);
@@ -182,10 +217,64 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
               <p className="text-xs text-gray-500 mt-0.5">{casos.length} registro{casos.length !== 1 ? 's' : ''} en total</p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2.5 hover:bg-white/5 rounded-xl transition-colors">
-            <X className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowMetricas(v => !v)}
+              className="px-4 h-[38px] rounded-lg text-xs font-medium bg-[#25d366]/10 border border-[#25d366]/25 text-[#25d366] hover:bg-[#25d366]/20 transition-all"
+            >
+              {showMetricas ? 'Ocultar métricas' : 'Ver métricas'}
+            </button>
+            <button onClick={onClose} className="p-2.5 hover:bg-white/5 rounded-xl transition-colors">
+              <X className="w-5 h-5 text-gray-400 hover:text-white transition-colors" />
+            </button>
+          </div>
         </div>
+
+        {showMetricas && metricas && (
+          <div className="border-b border-[rgba(37,211,102,0.1)] shrink-0 bg-[#0d0f12]" style={{ padding: '16px 28px' }}>
+            <div className="flex flex-wrap gap-3">
+              <div className="px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10 min-w-[130px]">
+                <p className="text-[11px] uppercase tracking-widest text-gray-500">Total</p>
+                <p className="text-xl font-bold text-white">{metricas.total}</p>
+              </div>
+              <div className="px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 min-w-[130px]">
+                <p className="text-[11px] uppercase tracking-widest text-yellow-500/80">Pendientes</p>
+                <p className="text-xl font-bold text-yellow-400">{metricas.porEstado['pendiente'] || 0}</p>
+              </div>
+              <div className="px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 min-w-[130px]">
+                <p className="text-[11px] uppercase tracking-widest text-emerald-500/80">Atendidos</p>
+                <p className="text-xl font-bold text-emerald-400">{metricas.porEstado['atendido'] || 0}</p>
+              </div>
+              <div className="flex-1 min-w-[220px] px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
+                <p className="text-[11px] uppercase tracking-widest text-gray-500 mb-2">Por tipo</p>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(metricas.porTipo).map(([tipo, n]) => (
+                    <span key={tipo} className="text-xs px-2.5 py-1 rounded-full bg-[#25d366]/10 border border-[#25d366]/25 text-[#25d366]">
+                      {getTipoLabel(tipo)}: <b>{n}</b>
+                    </span>
+                  ))}
+                  {Object.keys(metricas.porTipo).length === 0 && <span className="text-xs text-gray-600">Sin datos</span>}
+                </div>
+              </div>
+              <div className="flex-1 min-w-[220px] px-4 py-3 rounded-xl bg-white/[0.03] border border-white/10">
+                <p className="text-[11px] uppercase tracking-widest text-gray-500 mb-2">Últimos días</p>
+                <div className="flex items-end gap-1.5 h-[42px]">
+                  {Object.entries(metricas.porDia).slice(-7).map(([dia, n]) => {
+                    const max = Math.max(1, ...Object.values(metricas.porDia));
+                    const h = Math.max(6, Math.round((n / max) * 36));
+                    return (
+                      <div key={dia} className="flex flex-col items-center gap-1" title={`${dia}: ${n}`}>
+                        <div className="w-6 rounded bg-[#25d366]/60" style={{ height: `${h}px` }} />
+                        <span className="text-[10px] text-gray-500">{dia.slice(0, 5)}</span>
+                      </div>
+                    );
+                  })}
+                  {Object.keys(metricas.porDia).length === 0 && <span className="text-xs text-gray-600">Sin datos</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="border-b border-[rgba(37,211,102,0.1)] shrink-0" style={{ padding: '16px 28px' }}>
           <div className="flex flex-wrap items-center gap-4">

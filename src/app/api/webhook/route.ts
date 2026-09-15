@@ -13,6 +13,14 @@ import {
 } from '@/lib/menu';
 
 import { extractMontoBs, clasificarMonto, generarCasoId, formatearFechaAhora } from '@/lib/monto';
+import { normalizeFechaES } from '@/lib/normalizacion';
+import {
+  validarExtraccionEvento,
+  validarExtraccionPublicidad,
+  buildSecondaryValidationPrompt,
+  buildAuditEntry,
+  buildCierreEmpatico,
+} from '@/lib/validacion-secundaria';
 
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const WHAPI_BASE_URL = 'https://gate.whapi.cloud';
@@ -435,14 +443,21 @@ export async function POST(req: NextRequest) {
         estadoActual = updates.estado;
       }
       
-      // estacion_evento - capturar datos
+      // estacion_evento - capturar datos (regex primario + normalización robusta)
       if (currentFlow === 'estacion_evento' && waitingForCapture === 'datos_evento') {
         const text = userText.trim();
         const lower = text.toLowerCase();
         
         if (!updates.estado.fecha) {
-          const fechaMatch = text.match(/\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?/);
-          if (fechaMatch) updates.estado.fecha = fechaMatch[0];
+          // Capa C: normalización robusta (20/09/2026, 20 sep 2026, hoy, mañana…)
+          try {
+            const norm = normalizeFechaES(text);
+            if (norm) updates.estado.fecha = norm;
+          } catch { /* ignore */ }
+          if (!updates.estado.fecha) {
+            const fechaMatch = text.match(/\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?/);
+            if (fechaMatch) updates.estado.fecha = fechaMatch[0];
+          }
         }
         
         if (!updates.estado.asistentes) {
@@ -981,8 +996,30 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
     if (activeFlow === 'publicidad_dooh') {
       // Usar estadoActual ya actualizado con captura de datos
       const chatEstado = estadoActual;
+
+      // Capa A: validación secundaria — si falta marca, intentar rescate LLM (best-effort)
+      if ((!chatEstado.marca || chatEstado.plan === 'sin definir') && userText.length > 2) {
+        try {
+          const v = validarExtraccionPublicidad({ marca: chatEstado.marca, plan: chatEstado.plan });
+          if (v.confianza !== 'alta') {
+            const promptSec = buildSecondaryValidationPrompt('publicidad_dooh', userText, {
+              marca: chatEstado.marca,
+              plan: chatEstado.plan,
+            });
+            const secRes = await callAI(promptSec, 0.1, true);
+            if (secRes) {
+              const clean = secRes.replace(/```json/gi, '').replace(/```/gi, '').trim();
+              const parsed = JSON.parse(clean);
+              if (parsed.marca && !chatEstado.marca) (estadoActual as any).marca = String(parsed.marca).slice(0, 100);
+              if (parsed.plan && (chatEstado.plan === 'sin definir' || !chatEstado.plan)) {
+                (estadoActual as any).plan = String(parsed.plan).slice(0, 50);
+              }
+            }
+          }
+        } catch { /* best-effort: seguir con regex */ }
+      }
       
-      if (!chatEstado.marca || !chatEstado.plan) {
+      if (!estadoActual.marca || !estadoActual.plan) {
         // Paso 1: Pedir marca y plan
         const pregunta = `¡Qué bien! 😊 Las pantallas de VOLTAJE PLUS están en estaciones de alto tráfico. Tenemos planes:
 - **Estándar 24**: 24 exposiciones/día
@@ -1001,7 +1038,10 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       
       // Paso 2: Usuario ya dio marca y plan - guardar caso
       const casoId = generarCasoId();
-      const observaciones = `Marca/empresa: ${chatEstado.marca || 'no especificada'}. Plan: ${chatEstado.plan || 'sin definir'}.`;
+      const marcaFinal = (estadoActual as any).marca || chatEstado.marca || 'no especificada';
+      const planFinal = (estadoActual as any).plan || chatEstado.plan || 'sin definir';
+      const observaciones = `Marca/empresa: ${marcaFinal}. Plan: ${planFinal}.`;
+      const auditoriaPub = buildAuditEntry(userText, { marca: marcaFinal, plan: planFinal }, 'regex+llm', marcaFinal !== 'no especificada' ? 'alta' : 'baja');
       
       try {
         await set(ref(db, 'casos_atencion/' + chatId), {
@@ -1013,12 +1053,13 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
           telefono: chatId,
           observaciones,
           estado: 'Pendiente',
+          auditoria: auditoriaPub,
         });
       } catch (e) {
         console.error('[CASO_ATENCION] Error guardando PUBLICIDAD_DOOH:', e);
       }
       
-      const respuesta = `¡Listo! Tu solicitud (ID: ${casoId}) está registrada. Te contactaremos para cerrar detalles. 💚`;
+      const respuesta = buildCierreEmpatico('publicidad_dooh', casoId, `Marca ${marcaFinal}, Plan ${planFinal}.`);
       await sendWhapi(chatId, respuesta);
       await saveAgentMessage(db, chatId, respuesta);
       
@@ -1049,6 +1090,7 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       // Paso 2: Guardar caso
       const casoId = generarCasoId();
       const observaciones = `Negocio: ${chatEstado.negocio}. Dirección/zona: ${chatEstado.zona}.`;
+      const auditoriaGratis = buildAuditEntry(userText, { negocio: chatEstado.negocio, zona: chatEstado.zona }, 'regex', 'alta');
       
       try {
         await set(ref(db, 'casos_atencion/' + chatId), {
@@ -1060,12 +1102,13 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
           telefono: chatId,
           observaciones,
           estado: 'Pendiente',
+          auditoria: auditoriaGratis,
         });
       } catch (e) {
         console.error('[CASO_ATENCION] Error guardando ESTACION_GRATIS:', e);
       }
       
-      const respuesta = `¡Perfecto! Tu solicitud (ID: ${casoId}) está registrada. Un asesor te contactará para coordinar la instalación. 💚`;
+      const respuesta = buildCierreEmpatico('estacion_gratis', casoId, `${chatEstado.negocio}, ${chatEstado.zona}.`);
       await sendWhapi(chatId, respuesta);
       await saveAgentMessage(db, chatId, respuesta);
       
@@ -1079,8 +1122,43 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
     // --- FLUJO: estacion_evento ---
     if (activeFlow === 'estacion_evento') {
       const chatEstado = estadoActual;
-      
-      const necesita = ['tipoEvento', 'fecha', 'ubicacion', 'asistentes'].filter(k => !chatEstado[k]);
+
+      // Capa A: validación secundaria LLM si regex dejó huecos (best-effort)
+      let necesita = ['tipoEvento', 'fecha', 'ubicacion', 'asistentes'].filter(k => !(chatEstado as any)[k]);
+      if (necesita.length > 0 && necesita.length < 4 && userText.length > 2) {
+        try {
+          const v = validarExtraccionEvento({
+            tipoEvento: (chatEstado as any).tipoEvento,
+            fecha: (chatEstado as any).fecha,
+            ubicacion: (chatEstado as any).ubicacion,
+            asistentes: (chatEstado as any).asistentes,
+          });
+          if (v.confianza !== 'alta') {
+            const promptSec = buildSecondaryValidationPrompt('estacion_evento', userText, {
+              tipoEvento: (chatEstado as any).tipoEvento,
+              fecha: (chatEstado as any).fecha,
+              ubicacion: (chatEstado as any).ubicacion,
+              asistentes: (chatEstado as any).asistentes,
+            });
+            const secRes = await callAI(promptSec, 0.1, true);
+            if (secRes) {
+              const clean = secRes.replace(/```json/gi, '').replace(/```/gi, '').trim();
+              const parsed = JSON.parse(clean);
+              for (const k of ['tipoEvento', 'fecha', 'ubicacion', 'asistentes'] as const) {
+                if (parsed[k] && !(chatEstado as any)[k]) (estadoActual as any)[k] = String(parsed[k]).slice(0, 100);
+              }
+              // Normalizar fecha rescatada por LLM
+              if ((estadoActual as any).fecha) {
+                try {
+                  const nf = normalizeFechaES(String((estadoActual as any).fecha));
+                  if (nf) (estadoActual as any).fecha = nf;
+                } catch { /* ignore */ }
+              }
+              necesita = ['tipoEvento', 'fecha', 'ubicacion', 'asistentes'].filter(k => !(estadoActual as any)[k]);
+            }
+          }
+        } catch { /* seguir con regex */ }
+      }
       
       if (necesita.length > 0) {
         // Paso 1 o intermedio: Pedir datos faltantes
@@ -1108,7 +1186,10 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       
       // Paso 2: Guardar caso
       const casoId = generarCasoId();
-      const observaciones = `Tipo de evento: ${chatEstado.tipoEvento}. Fecha(s): ${chatEstado.fecha}. Ubicación: ${chatEstado.ubicacion}. Asistentes: ${chatEstado.asistentes}.`;
+      const evEstado = estadoActual as any;
+      const fechaFinal = (() => { try { return normalizeFechaES(String(evEstado.fecha)) || evEstado.fecha; } catch { return evEstado.fecha; } })();
+      const observaciones = `Tipo de evento: ${evEstado.tipoEvento}. Fecha(s): ${fechaFinal}. Ubicación: ${evEstado.ubicacion}. Asistentes: ${evEstado.asistentes}.`;
+      const auditoriaEv = buildAuditEntry(userText, { tipoEvento: evEstado.tipoEvento, fecha: fechaFinal, ubicacion: evEstado.ubicacion, asistentes: evEstado.asistentes }, 'regex+llm', 'alta');
       
       try {
         await set(ref(db, 'casos_atencion/' + chatId), {
@@ -1120,12 +1201,13 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
           telefono: chatId,
           observaciones,
           estado: 'Pendiente',
+          auditoria: auditoriaEv,
         });
       } catch (e) {
         console.error('[CASO_ATENCION] Error guardando ESTACION_EVENTO:', e);
       }
       
-      const respuesta = `¡Listo! Tu solicitud (ID: ${casoId}) está registrada. Te contactaremos con disponibilidad y costos. 💚`;
+      const respuesta = buildCierreEmpatico('estacion_evento', casoId, `${evEstado.tipoEvento}, ${fechaFinal}, ${evEstado.ubicacion}, ${evEstado.asistentes} asistentes.`);
       await sendWhapi(chatId, respuesta);
       await saveAgentMessage(db, chatId, respuesta);
       
@@ -1156,6 +1238,7 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       // Paso 2: Guardar caso (Estado = Atendido)
       const casoId = generarCasoId();
       const observaciones = `Motivo: ${chatEstado.motivo}.`;
+      const auditoriaHum = buildAuditEntry(userText, { nombre: chatEstado.nombre, motivo: chatEstado.motivo }, 'regex', 'alta');
       
       try {
         await set(ref(db, 'casos_atencion/' + chatId), {
@@ -1167,12 +1250,13 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
           telefono: chatId,
           observaciones,
           estado: 'Atendido',
+          auditoria: auditoriaHum,
         });
       } catch (e) {
         console.error('[CASO_ATENCION] Error guardando AGENTE_HUMANO:', e);
       }
       
-      const respuesta = `¡Listo! Tu caso (ID: ${casoId}) está registrado. Te atiende un compañero al **0412-685-1090** (https://wa.me/584126851090). ¡Gracias! 💚`;
+      const respuesta = buildCierreEmpatico('agente_humano', casoId, `${chatEstado.nombre}, motivo: ${chatEstado.motivo}.`);
       await sendWhapi(chatId, respuesta);
       await saveAgentMessage(db, chatId, respuesta);
       

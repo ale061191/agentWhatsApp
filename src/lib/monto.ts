@@ -1,6 +1,12 @@
 // Utilidades para detectar y clasificar montos en bolívares
+import { normalizeMontoBs } from './normalizacion';
 
 export function extractMontoBs(text: string): number | null {
+  // Capa complementaria: normalización robusta primero (12.000Bs, 12 000, 12mil, etc.)
+  try {
+    const robusto = normalizeMontoBs(text);
+    if (robusto !== null) return robusto;
+  } catch { /* fallback a lógica legacy */ }
   const lower = text.toLowerCase();
   
   // Patrones con "bs" o "bolivares" - SOPORTA números con y sin separadores de miles

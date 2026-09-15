@@ -41,6 +41,36 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ casos: null });
     }
 
+    if (action === 'getMetricasAtencion') {
+      const snapshot = await get(child(dbRef, 'casos_atencion'));
+      const raw = snapshot.exists() ? (snapshot.val() as Record<string, any>) : {};
+      const arr = Object.values(raw);
+      const porTipo: Record<string, number> = {};
+      const porEstado: Record<string, number> = {};
+      const porDia: Record<string, number> = {};
+      for (const c of arr) {
+        const tipo = c.tipo || 'SIN_TIPO';
+        const estado = (c.estado || 'Pendiente').toLowerCase();
+        porTipo[tipo] = (porTipo[tipo] || 0) + 1;
+        porEstado[estado] = (porEstado[estado] || 0) + 1;
+        // fecha viene como DD/MM/YYYY HH:MM — extraer DD/MM/YYYY
+        const m = String(c.fecha || '').match(/(\d{2}\/\d{2}\/\d{4})/);
+        const dia = m ? m[1] : new Date().toLocaleDateString('es-VE');
+        porDia[dia] = (porDia[dia] || 0) + 1;
+      }
+      // últimos 7 días ordenados
+      const diasOrdenados = Object.entries(porDia)
+        .sort((a, b) => {
+          const pa = a[0].split('/').reverse().join('');
+          const pb = b[0].split('/').reverse().join('');
+          return pa.localeCompare(pb);
+        })
+        .slice(-7);
+      return NextResponse.json({
+        metricas: { total: arr.length, porTipo, porEstado, porDia: Object.fromEntries(diasOrdenados) },
+      });
+    }
+
     if (action === 'getChats') {
       const chatsRef = ref(db, 'chats');
       const snapshot = await get(chatsRef);
