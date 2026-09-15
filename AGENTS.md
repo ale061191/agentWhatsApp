@@ -88,3 +88,105 @@ WHAPI base URL hardcodeada: `https://gate.whapi.cloud`
 - El proyecto usa `tailwindcss v4` con PostCSS
 - El SDK de Firebase es el de cliente (`firebase`) en TODAS partes, incluso server-side (no usa `firebase-admin`)
 - `agentWhatsApp-main/` en la raíz es una copia duplicada anidada — ignorar
+
+---
+
+## Registro de Sesiones de Desarrollo
+
+### Sesión 15/09/2026 — Optimización completa del agente Sonia (cierre fuerte)
+
+**Resumen ejecutivo:** Se optimizó el flujo del agente WhatsApp de Sonia: se corrigieron bugs críticos de routing, se añadieron capas de validación/metrics, se arreglaron reglas de Firebase, y se mejoró significativamente la UI del modal de Casos Atención.
+
+---
+
+#### A. Validación Secundaria con LLM
+- **Archivo:** `src/lib/validacion-secundaria.ts` (nuevo)
+- **Qué hace:** Función `validarExtraccionEvento`, `validarExtraccionPublicidad`, `buildSecondaryValidationPrompt`, `buildAuditEntry`, `buildCierreEmpatico`, `violaGuardrail`.
+- **Integrado en:** `src/app/api/webhook/route.ts` — se ejecuta en los flujos de publicidad y evento (best-effort try/catch para no bloquear el flujo principal).
+
+#### B. Dashboard de Métricas
+- **Archivo:** `src/app/api/db/route.ts` — nueva función `getMetricasAtencion` que retorna: total, porTipo, porEstado, porDia (últimos 7 días).
+- **UI:** `src/components/CasosAtencionModal.tsx` — botón toggle "Ver métricas", chips por tipo, mini gráfico de barras por día.
+
+#### C. Normalización + Guardrails + Cierres Empáticos
+- **Archivo:** `src/lib/normalizacion.ts` (nuevo) — `normalizeFechaES` (acepta DD/MM/YYYY, "20 sep 2026", "20nde septiembre", hoy/mañana), `normalizeMontoBs` ("12.000Bs", "12mil", "doce mil"), `extractMontoRobusto`.
+- **`src/lib/monto.ts`** ahora importa `normalizeMontoBs` como primer paso antes del fallback legacy.
+- **Flujo del webhook:** Todos los 4 flujos (publicidad, gratis, evento, humano) ahora usan `buildCierreEmpatico` con recap.
+
+#### D. Fix Montalbán-1 (detección numérica)
+- **Archivo:** `src/lib/menu.ts` — `detectFlow` ahora solo acepta `^[1-7]$` como opción numérica. "montalbán 1" ya no dispara opción 1.
+
+#### E. Blindaje waitingFor
+- El campo `waitingFor` del estado no cambia mid-capture a menos que:
+  - El usuario elija explícitamente una opción del menú, o
+  - Se detecte que el usuario está stuck en `monto_exacto`.
+- Se preservan parciales (`...estadoActual`) al re-persistir state en cada re-intento de captura.
+
+#### F. Normalización de Keywords
+- Eliminadas palabras sueltas que causaban falsos positivos: `persona` (agente_humano), `fecha`/`asistentes` (evento), `otra`/`info` (otra_consulta).
+- `otra_consulta` ahora requiere frase explícita o texto corto (<35 chars).
+
+#### G. Anti-Hijack en Reembolso
+- Flujo `otra_consulta` ignorado durante estados `reembolso`/`1200_error`/`monto_exacto` a menos que se use frase explícita.
+- **Tracker anti-redundancia reembolso:** Extrae cuenta20, banco, teléfono, monto, fecha, posible cédula del historial completo → guarda en `estado.reembolsoData` → inyecta prompt `DATOS YA RECIBIDOS (NO volver a pedirlos)`. El formato del recap NO se modificó (decisión del CEO).
+
+#### H. Fix persist() — preservación de parciales
+- `src/app/api/webhook/route.ts` — el `update` final ahora hace `...estadoActual, flow: ...` en vez de reemplazar todo el objeto `estado` (lo cual borraba parciales capturados).
+
+#### I. Extracción de Eventos mejorada
+- `normalizeFechaES` se aplica ANTES del regex de fallback en el webhook.
+- Tolerancia a typos: `20nde` → `20 de`.
+- Soporte para rangos de asistentes: `200-300`.
+- Palabras clave expandidas: carro, auto, expo, lanzamiento.
+
+#### J. Extracción Negocio/Zona
+- Separación por coma / "y me ubico".
+- Helpers `cleanNegocio` / `cleanZona` para deduplicar zona del final del nombre del negocio.
+
+#### K. API Endpoints nuevos en `src/app/api/db/route.ts`
+- `updateCasoAtencion` — actualiza campos de un caso (estado, etc.).
+- `deleteCasoAtencion` — elimina un caso de Firebase (antes el botón "Eliminar" solo borraba del state local).
+
+#### L. Firebase Rules — fix Incidente 15/09/2026
+- **Problema:** El modal Casos Atención daba HTTP 500 porque las rules publicadas NO tenían el nodo `casos_atencion` (se creó con código nuevo y nunca se agregó). Todo lo demás cargaba bien.
+- **Fix:** Agregar `"casos_atencion": { ".read": true, "$chatId": { ".write": true } }` al archivo de rules en `nova-tech-ai-a78bc` y Publicar.
+- **Verificación:** REST `GET /casos_atencion.json` → 200; `getCasosAtencion` en la app → 200; `getMetricasAtencion` → 200.
+- **Nota:** Los casos generados mientras faltaba la rule NO se recuperan (el webhook falla en silencio y avisa el ID del caso igualmente).
+
+#### M. Modal CasosAtención — UI/UX
+- **Fix "Invalid Date":** Se agregó `parseFechaCaso()` que parsea `DD/MM/YYYY HH:MM` (formato guardado por el webhook) correctamente. `new Date()` no lo hacía. Esto también arreglo el ordenamiento y los filtros por fecha.
+- **Check de Atendido:** Nueva columna ATENDIDO con toggle optimista (igual al modal de reembolsos). Al marcar: estado cambia a "Atendido" (pill verde ✅), métricas se actualizan al instante, reversión si falla la red.
+- **Espaciados métricas:** Cards más anchas (min 150px), padding generoso (16px 22px), número más grande (text-2xl), chips y barras con más breathing room.
+- **Footer:** "Mostrando X–Y de Z casos" + leyenda de Atendido.
+- **Excel:** Ahora exporta columna Atendido (Sí/No).
+
+#### N. Documentación `AGENTS.md`
+- Se agregó la sección de Infraestructura (proyecto Firebase, Vercel scope, gotchas, diagnóstico rápido).
+- Se documentó la ruta `casos_atencion` en Firebase RTDB paths críticos.
+- Se documentó el incidente 15/09/2026 de Firebase rules.
+
+---
+
+#### Commits (orden cronológico)
+| Hash | Mensaje |
+|---|---|
+| `15b146f` | `feat: optimizacion A-B-C validacion secundaria, metricas, normalizacion y cierres empaticos` |
+| `5902790` | `fix: montalban-1 falso menu, blindaje waitingFor, preserva parciales, fecha typo y keywords` |
+| `21c4241` | `fix: anti-secuestro flujo 7, tracker anti-redundancia reembolso, error visible modal` |
+| `b018ee2` | `feat: modal Atendido toggle, fix Invalid Date, espaciados metricas, API delete real` |
+
+#### Archivos modificados/creados
+- `src/lib/normalizacion.ts` — **nuevo** (normalización de fechas, montos)
+- `src/lib/validacion-secundaria.ts` — **nuevo** (validación LLM secundaria, cierres empáticos, audit)
+- `src/lib/monto.ts` — importa `normalizeMontoBs`
+- `src/lib/menu.ts` — `detectFlow` numérico hardcodeado `^[1-7]$`
+- `src/app/api/webhook/route.ts` — todas las integraciones (validación, blindaje, parciales, tracker, keywords)
+- `src/app/api/db/route.ts` — `getMetricasAtencion`, `updateCasoAtencion`, `deleteCasoAtencion`
+- `src/components/CasosAtencionModal.tsx` — métricas, check atendido, fix date, espaciados, footer
+- `AGENTS.md` — infra docs, path `casos_atencion`, incidente 15/09
+
+#### Decisiones clave de negocio (CEO)
+- Formato del recap de reembolso: NO cambiar (mantener ID, TIPO, Fecha, Usuario, Cédula, Teléfono, Cuenta, Ubicación, Monto, Observaciones, Estado).
+- Cierres empáticos con recap en flows 3-6.
+- Paso de confirmación "¿Te leí así…?" antes de finalizar.
+- Tracker anti-redundancia para reembolso (prompt injection de datos ya recibidos).
