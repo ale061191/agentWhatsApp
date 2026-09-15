@@ -412,32 +412,66 @@ export async function POST(req: NextRequest) {
         let negocio = '';
         let zona = '';
         const text = userText.trim();
-        
-        const negocioPatterns = [
-          /(?:negocio|negocio se llama|negocio es|se llama|me llamo|mi negocio)\s*(?:es|:)\s*([^,.\n]+)/i,
-          /^([^,.\n]+?)(?:\s*,\s*(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n))/i,
-        ];
-        
-        for (const pattern of negocioPatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) { negocio = match[1].trim(); break; }
+
+        // FIX (15/09/2026): partir por coma o por "y me ubico / me ubico / ubicado"
+        // para no guardar la oración completa como negocio y duplicar zona.
+        // Ej: "Mi negocio se llama motors Pepe trueno, y me ubico en montalban 1"
+        //  → negocio="motors Pepe trueno", zona="montalban 1"
+        const cleanNegocio = (s: string) =>
+          s
+            .replace(/^(mi negocio se llama|mi negocio es|mi negocio|el negocio se llama|se llama|me llamo|soy|mi empresa se llama|negocio)\s*/i, '')
+            .replace(/^[:\-–\s]+/, '')
+            .trim();
+        const cleanZona = (s: string) =>
+          s
+            .replace(/^(me ubico en|me ubico|ubicado en|ubicada en|estoy en|se ubica en|se ubica|en|zona es|direcci[oó]n es|y)\s*/i, '')
+            .replace(/[.]+$/, '')
+            .trim();
+
+        const partes = text.split(/,|\n|\sy\s+me\s+ubico|\sme\s+ubico\s+en|\subicad[oa]\s+en/i).map((p: string) => p.trim()).filter(Boolean);
+        if (partes.length >= 2) {
+          negocio = cleanNegocio(partes[0]);
+          zona = cleanZona(partes.slice(1).join(', '));
         }
-        
-        const zonaPatterns = [
-          /(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n)\s*(?:es|:|en)\s*([^,.\n]+)/i,
-          /(?:en|zona|direcci[oó]n)\s+([^,.\n]+)$/i,
-        ];
-        
-        for (const pattern of zonaPatterns) {
-          const match = text.match(pattern);
-          if (match && match[1]) { zona = match[1].trim(); break; }
+
+        if (!negocio || !zona) {
+          const negocioPatterns = [
+            /(?:mi negocio se llama|negocio se llama|mi negocio es|negocio es|se llama|me llamo|mi negocio)\s+([^,.\n]+)/i,
+            /(?:negocio|negocio se llama|negocio es|se llama|me llamo|mi negocio)\s*(?:es|:)\s*([^,.\n]+)/i,
+            /^([^,.\n]+?)(?:\s*,\s*(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n))/i,
+          ];
+
+          for (const pattern of negocioPatterns) {
+            const match = text.match(pattern);
+            if (match && match[1]) { negocio = cleanNegocio(match[1].trim()); break; }
+          }
+        }
+
+        if (!zona) {
+          const zonaPatterns = [
+            /(?:me ubico en|se ubica en|ubicad[ao] en|estoy en)\s*([^,.\n]+)/i,
+            /(?:se ubica|ubicad[ao]|est[áa]|en|zona|direcci[oó]n)\s*(?:es|:|en)\s*([^,.\n]+)/i,
+            /(?:en|zona|direcci[oó]n)\s+([^,.\n]+)$/i,
+          ];
+
+          for (const pattern of zonaPatterns) {
+            const match = text.match(pattern);
+            if (match && match[1]) { zona = cleanZona(match[1].trim()); break; }
+          }
         }
         
         const lineas = text.split('\n').map((l: string) => l.trim()).filter((l: string) => l);
-        if (!negocio && lineas[0]) negocio = lineas[0];
-        if (!zona && lineas.length > 1) zona = lineas.slice(1).join(' ');
+        if (!negocio && lineas[0]) negocio = cleanNegocio(lineas[0]);
+        if (!zona && lineas.length > 1) zona = cleanZona(lineas.slice(1).join(' '));
+
+        // Evitar duplicado tipo "negocio..., montalban, montalban":
+        // si negocio aún contiene la zona al final, recortarla.
+        if (negocio && zona && zona !== 'no especificada') {
+          const idx = negocio.toLowerCase().lastIndexOf(zona.toLowerCase());
+          if (idx > 10) negocio = negocio.slice(0, idx).replace(/[,;\s–-]+$/, '').trim();
+        }
         
-        updates.estado.negocio = negocio.slice(0, 100) || text.slice(0, 100);
+        updates.estado.negocio = negocio.slice(0, 100) || cleanNegocio(text).slice(0, 100);
         updates.estado.zona = zona || 'no especificada';
         await update(chatEstRef, updates);
         estadoActual = updates.estado;
@@ -461,10 +495,17 @@ export async function POST(req: NextRequest) {
         }
         
         if (!updates.estado.asistentes) {
-          const asistentesMatch = lower.match(/(\d{1,4})\s*(?:personas?|invitados?|asistentes?|gente)/);
-          if (asistentesMatch) updates.estado.asistentes = asistentesMatch[1];
-          const paraMatch = lower.match(/para\s+(\d{1,4})\s*(?:personas?|invitados?)/);
-          if (paraMatch) updates.estado.asistentes = paraMatch[1];
+          // FIX (15/09/2026): soportar rangos "entre 200 y 300 personas",
+          // "200 o 300 personas", "200-300 personas" → "200-300".
+          const rangoMatch = lower.match(/(\d{1,4})\s*(?:y|o|a|al|-|\/)\s*(\d{1,4})\s*(?:personas?|invitados?|asistentes?|gente|usuarios?)/);
+          if (rangoMatch) {
+            updates.estado.asistentes = `${rangoMatch[1]}-${rangoMatch[2]}`;
+          } else {
+            const asistentesMatch = lower.match(/(\d{1,4})\s*(?:personas?|invitados?|asistentes?|gente|usuarios?)/);
+            if (asistentesMatch) updates.estado.asistentes = asistentesMatch[1];
+            const paraMatch = lower.match(/para\s+(\d{1,4})\s*(?:personas?|invitados?)/);
+            if (paraMatch) updates.estado.asistentes = paraMatch[1];
+          }
         }
         
         if (!updates.estado.ubicacion) {
@@ -479,7 +520,7 @@ export async function POST(req: NextRequest) {
         }
         
         if (!updates.estado.tipoEvento) {
-          const tipoKeywords = ['boda', 'fiesta', 'conferencia', 'congreso', 'feria', 'cumpleaños', 'quince', '15 años', 'graduación', 'empresarial', 'corporativo', 'show', 'concierto', 'festival'];
+          const tipoKeywords = ['boda', 'fiesta', 'conferencia', 'congreso', 'feria', 'cumpleaños', 'quince', '15 años', 'graduación', 'empresarial', 'corporativo', 'show', 'concierto', 'festival', 'carro', 'carros', 'auto', 'expo', 'taller', 'lanza', 'lanzamiento'];
           for (const kw of tipoKeywords) {
             if (lower.includes(kw)) { updates.estado.tipoEvento = kw; break; }
           }
@@ -545,7 +586,35 @@ export async function POST(req: NextRequest) {
     }
 
     // Detectar a qué flujo debe moverse según el mensaje del usuario.
-    const detected = detectFlow(userText);
+    // FIX (15/09/2026): si estamos a mitad de una captura (waitingFor), NO
+    // cambiar de flujo por keywords sueltas ("montalban 1" disparaba opción 1).
+    // Solo se permite cambiar si pide menú/volver o elige 1-7 explícito.
+    const detectedRaw = detectFlow(userText);
+    const isExplicitMenuChoice =
+      /^[1-7]$/.test(userText.trim()) ||
+      /^(?:opci[oó]n|numero|número|la|el)\s*[1-7]$/.test(userText.trim().toLowerCase());
+    let detected: FlowId | null = detectedRaw;
+    if (waitingForCapture && detectedRaw && detectedRaw !== 'menu' && !isExplicitMenuChoice) {
+      // Recuperación: si quedó atascado en monto_exacto por el bug viejo y el
+      // usuario corrige sin monto ("No no, te estoy dando... estación gratis"),
+      // permitir volver al flujo que pide.
+      const stuckInMonto =
+        estadoActual.flow === 'falla_alquiler_monto' && waitingForCapture === 'monto_exacto';
+      let allowRecovery = false;
+      if (stuckInMonto) {
+        try {
+          const m = extractMontoBs(userText);
+          const wantsOther = ['estacion_gratis', 'publicidad_dooh', 'estacion_evento', 'agente_humano', 'reembolso'].includes(detectedRaw);
+          if (m === null && wantsOther) allowRecovery = true;
+        } catch { /* ignore */ }
+      }
+      if (!allowRecovery) {
+        console.log('[MENU] waitingFor=', waitingForCapture, '— se conserva flujo', estadoActual.flow, 'y se ignora detección', detectedRaw);
+        detected = null;
+      } else {
+        console.log('[MENU] recovery: se permite volver de falla_alquiler_monto a', detectedRaw);
+      }
+    }
     let activeFlow: FlowId = (estadoActual.flow as FlowId) || 'menu';
 
     if (detected && detected !== estadoActual.flow) {
@@ -1031,7 +1100,8 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
         await saveAgentMessage(db, chatId, pregunta);
         
         try {
-          await update(chatEstRef, { estado: { flow: 'publicidad_dooh', waitingFor: 'marca_plan' } });
+          // FIX (15/09/2026): conservar parciales ya capturados (no borrar marca).
+          await update(chatEstRef, { estado: { ...(estadoActual as any), flow: 'publicidad_dooh', waitingFor: 'marca_plan' } });
         } catch (e) {}
         return NextResponse.json({ success: true });
       }
@@ -1082,7 +1152,8 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
         await saveAgentMessage(db, chatId, pregunta);
         
         try {
-          await update(chatEstRef, { estado: { flow: 'estacion_gratis', waitingFor: 'negocio_zona' } });
+          // FIX (15/09/2026): conservar parciales ya capturados (negocio/zona).
+          await update(chatEstRef, { estado: { ...(estadoActual as any), flow: 'estacion_gratis', waitingFor: 'negocio_zona' } });
         } catch (e) {}
         return NextResponse.json({ success: true });
       }
@@ -1179,7 +1250,8 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
         await saveAgentMessage(db, chatId, pregunta);
         
         try {
-          await update(chatEstRef, { estado: { flow: 'estacion_evento', waitingFor: 'datos_evento' } });
+          // FIX (15/09/2026): conservar parciales (tipoEvento/fecha/ubicación/asistentes).
+          await update(chatEstRef, { estado: { ...(estadoActual as any), flow: 'estacion_evento', waitingFor: 'datos_evento' } });
         } catch (e) {}
         return NextResponse.json({ success: true });
       }
@@ -1230,7 +1302,8 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
         await saveAgentMessage(db, chatId, pregunta);
         
         try {
-          await update(chatEstRef, { estado: { flow: 'agente_humano', waitingFor: 'nombre_motivo' } });
+          // FIX (15/09/2026): conservar parciales (nombre/motivo).
+          await update(chatEstRef, { estado: { ...(estadoActual as any), flow: 'agente_humano', waitingFor: 'nombre_motivo' } });
         } catch (e) {}
         return NextResponse.json({ success: true });
       }

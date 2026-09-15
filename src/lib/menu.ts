@@ -78,21 +78,26 @@ export const MENU_OPTIONS: MenuOption[] = [
     number: 5,
     emoji: '5️⃣',
     title: 'Necesito una estación para mi EVENTO',
-    keywords: ['evento', 'fiesta', 'boda', 'congreso', 'feria', 'alquiler temporal', 'estacion evento', 'estación evento', 'maquina evento', 'máquina evento', 'asistentes', 'fecha'],
+    // FIX (15/09/2026): se quitaron 'fecha' y 'asistentes' sueltos — disparaban
+    // el flujo con cualquier "300 personas" o "la fecha del cobro".
+    keywords: ['evento', 'fiesta', 'boda', 'congreso', 'feria', 'alquiler temporal', 'estacion evento', 'estación evento', 'maquina evento', 'máquina evento'],
   },
   {
     id: 'agente_humano',
     number: 6,
     emoji: '6️⃣',
     title: 'Hablar con un AGENTE de Voltaje',
-    keywords: ['humano', 'persona', 'asesor', 'agente', 'operador', 'hablar con alguien', 'con una persona', 'supervisor', 'atencion humana', 'atención humana'],
+    // FIX (15/09/2026): se quitó 'persona' suelto — "300 personas" lo disparaba.
+    // Se conserva 'con una persona' como frase explícita.
+    keywords: ['humano', 'asesor', 'agente', 'operador', 'hablar con alguien', 'con una persona', 'supervisor', 'atencion humana', 'atención humana'],
   },
   {
     id: 'otra_consulta',
     number: 7,
     emoji: '7️⃣',
     title: 'Otra consulta',
-    keywords: ['otra', 'consulta', 'pregunta', 'duda', 'ayuda', 'info', 'informacion', 'información'],
+    // FIX (15/09/2026): se quitaron 'otra' e 'info' sueltos — demasiado genéricos.
+    keywords: ['otra consulta', 'consulta', 'pregunta', 'duda', 'ayuda', 'informacion', 'información'],
   },
 ];
 
@@ -120,10 +125,19 @@ export function detectFlow(input: string): FlowId | null {
   if (!input) return null;
   const text = (input || '').toLowerCase().trim();
 
-  // 1) Si manda únicamente un número (1-7) → opción directa
-  const numericOnly = text.replace(/\D/g, '');
-  if (/^\d+$/.test(numericOnly.trim()) && numericOnly.trim().length <= 1) {
-    const n = parseInt(numericOnly, 10);
+  // 1) Si manda únicamente un número (1-7) → opción directa.
+  // FIX (15/09/2026): antes se usaba text.replace(/\D/g,'') lo que convertía
+  // "montalban 1" en "1" y lo confundía con la opción 1 del menú.
+  // Ahora solo vale si TODO el mensaje es "4" u "opción 4".
+  const trimmed = text.trim();
+  if (/^[1-7]$/.test(trimmed)) {
+    const n = parseInt(trimmed, 10);
+    const opt = MENU_OPTIONS.find(o => o.number === n);
+    if (opt) return opt.id;
+  }
+  const shortOpt = trimmed.match(/^(?:opci[oó]n|numero|número|la|el)\s*([1-7])$/);
+  if (shortOpt) {
+    const n = parseInt(shortOpt[1], 10);
     const opt = MENU_OPTIONS.find(o => o.number === n);
     if (opt) return opt.id;
   }

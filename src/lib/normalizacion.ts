@@ -36,7 +36,13 @@ export function formatearDDMMYYYY(d: Date): string {
  */
 export function normalizeFechaES(text: string, baseDate = new Date()): string | null {
   if (!text) return null;
-  const lower = text.toLowerCase().trim();
+  // FIX (15/09/2026): tolerar typos sin espacio tipo "20nde septiembre",
+  // "20de septiembre", "20SEP". Separa dígito pegado a letra y normaliza "nde".
+  let lower = text.toLowerCase().trim();
+  lower = lower
+    .replace(/(\d)([a-záéíóúñ]+)/gi, '$1 $2')
+    .replace(/\b(\d{1,2})\s*n\s*de\b/gi, '$1 de')
+    .replace(/\b(\d{1,2})\s*de\s*([a-záéíóúñ]+)/gi, '$1 de $2');
 
   // relativos
   if (/\bhoy\b/.test(lower)) return formatearDDMMYYYY(baseDate);
