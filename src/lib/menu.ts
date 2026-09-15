@@ -194,8 +194,17 @@ export function detectFlow(input: string): FlowId | null {
   }
 
   // 5) Coincidencia por keywords del menú
+  // FIX (15/09/2026): 'otra consulta' era un imán de falsos positivos
+  // ("exacto la información" en pleno reembolso lo secuestraba al flujo 7).
+  // Ahora ese flujo solo dispara con texto corto o frase explícita.
   for (const entry of menuKeywords) {
     for (const kw of entry.keywords) {
+      if (entry.id === 'otra_consulta') {
+        if (!text.includes(kw)) continue;
+        const esFraseExplicita = text.includes('otra consulta');
+        if (!esFraseExplicita && text.length > 35) continue;
+        return entry.id;
+      }
       if (text.includes(kw)) return entry.id;
     }
   }

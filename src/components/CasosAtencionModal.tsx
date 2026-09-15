@@ -42,16 +42,25 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
   const [currentPage, setCurrentPage] = useState(1);
   const [metricas, setMetricas] = useState<MetricasAtencion | null>(null);
   const [showMetricas, setShowMetricas] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const ITEMS_PER_PAGE = 10;
 
   const loadCasos = useCallback(async () => {
     if (!isOpen) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const [resCasos, resMet] = await Promise.all([
         fetch('/api/db?action=getCasosAtencion'),
         fetch('/api/db?action=getMetricasAtencion').catch(() => null),
       ]);
+      if (!resCasos.ok) {
+        // No silenciar: si Firebase bloquea lectura (rules), avisar en UI.
+        setLoadError(`No se pudo leer casos_atencion (HTTP ${resCasos.status}). Revisa las reglas de Firebase Realtime Database.`);
+        setCasos([]);
+        setMetricas({ total: 0, porTipo: {}, porEstado: {}, porDia: {} });
+        return;
+      }
       const data = await resCasos.json();
       if (data.casos) {
         const arr: CasoAtencion[] = Object.entries(data.casos).map(([id, caso]: [string, any]) => ({ id, ...caso }));
@@ -85,6 +94,7 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
       }
     } catch (e) {
       console.error('Error loading casos:', e);
+      setLoadError('Error de conexión al cargar casos. Revisa la consola y las reglas de Firebase.');
     } finally {
       setLoading(false);
     }
@@ -359,12 +369,18 @@ export default function CasosAtencionModal({ isOpen, onClose }: CasosAtencionMod
             </div>
           ) : casosFiltrados.length === 0 ? (
             <div className="flex items-center justify-center py-20">
-              <div className="flex flex-col items-center gap-4 text-center">
+              <div className="flex flex-col items-center gap-4 text-center max-w-[420px]">
                 <div className="w-16 h-16 rounded-2xl bg-white/5 flex items-center justify-center">
                   <AlertCircle className="w-8 h-8 text-gray-600" />
                 </div>
-                <p className="text-gray-400 font-medium text-base">No hay casos registrados</p>
-                <p className="text-xs text-gray-600">Los casos aparecerán aquí cuando los usuarios soliciten atención</p>
+                <p className="text-gray-400 font-medium text-base">
+                  {loadError ? 'No se pudieron cargar los casos' : 'No hay casos registrados'}
+                </p>
+                <p className="text-xs text-gray-600">
+                  {loadError
+                    ? loadError
+                    : 'Los casos aparecerán aquí cuando los usuarios soliciten atención'}
+                </p>
               </div>
             </div>
           ) : (

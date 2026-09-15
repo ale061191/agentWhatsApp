@@ -615,6 +615,18 @@ export async function POST(req: NextRequest) {
         console.log('[MENU] recovery: se permite volver de falla_alquiler_monto a', detectedRaw);
       }
     }
+    // FIX (15/09/2026): los flujos de reembolso son conversacionales (IA, sin
+    // waitingFor) y el flujo 7 los secuestraba ("exacto la información" →
+    // "Por este canal solo veo esas 6 opciones" en plena captura de cuenta).
+    // Se ignora 'otra_consulta' salvo frase explícita o elección 1-7.
+    if (!waitingForCapture && detectedRaw === 'otra_consulta' && !isExplicitMenuChoice) {
+      const protegido = ['reembolso', 'reembolso_1200_error', 'falla_alquiler_monto'].includes(estadoActual.flow);
+      const esFraseExplicita = userText.toLowerCase().includes('otra consulta');
+      if (protegido && !esFraseExplicita) {
+        console.log('[MENU] se ignora otra_consulta durante', estadoActual.flow);
+        detected = null;
+      }
+    }
     let activeFlow: FlowId = (estadoActual.flow as FlowId) || 'menu';
 
     if (detected && detected !== estadoActual.flow) {
@@ -1353,11 +1365,59 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
       return NextResponse.json({ success: true });
     }
 
-    // Persistimos el flujo actual para la siguiente iteraciÃ³n (best-effort).
+    // Persistimos el flujo actual para la siguiente iteración (best-effort).
+    // FIX (15/09/2026): fusionar en vez de reemplazar — el reemplazo borraba
+    // los parciales capturados (causa del "Me falta: ubicación" repetido).
     try {
-      await update(chatEstRef, { estado: { flow: activeFlow } });
+      await update(chatEstRef, { estado: { ...(estadoActual as any), flow: activeFlow } });
     } catch (e) {
       console.log('[MENU] persist flow failed:', e);
+    }
+
+    // === 6B. Tracker anti-redundancia para REEMBOLSO (conversacional por IA) ===
+    // La IA solo ve los últimos 8 mensajes y re-pedía datos ya dados (cuenta,
+    // banco, teléfono...). Rastreamos por turno con regex y se lo inyectamos.
+    let datosRecibidosTxt = '';
+    if (activeFlow === 'reembolso') {
+      try {
+        const prevData = (estadoActual as any).reembolsoData || {};
+        const userAll = allMsgs.filter(m => m.sender === 'user').map(m => m.content).join('\n') + '\n' + userText;
+        const digitsOnly = userAll.replace(/\D/g, ' ');
+        const cuentaMatch = userAll.replace(/[.\s-]/g, '').match(/\d{20}/) || digitsOnly.replace(/\s+/g, '').match(/\d{20}/);
+        // teléfono VE: 0412..., 0424..., +58...
+        const telMatch = userAll.match(/(\+?58\s*)?0?4(12|14|16|24|26)\s*\d{6,7}/);
+        const bancosList = ['banesco', 'venezuela', 'mercantil', 'provincial', 'bicentenario', 'bancaribe', 'exterior', 'plaza', 'fondo comun', 'fondo común', '100% banco', 'tesoro', 'caroni', 'caroní', 'activo', 'bod', 'bnc'];
+        const lowerAll = userAll.toLowerCase();
+        const bancoFound = bancosList.find(b => lowerAll.includes(b));
+        const montoFound = extractMontoBs(userAll);
+        let fechaFound: string | null = null;
+        try { fechaFound = normalizeFechaES(userAll); } catch { /* ignore */ }
+        const cedMatch = userAll.match(/\b(\d{7,8})\b/);
+        const merged = {
+          cuenta20: (cuentaMatch ? cuentaMatch[0] : prevData.cuenta20) || '',
+          telefono: (telMatch ? telMatch[0].trim() : prevData.telefono) || '',
+          banco: (bancoFound ? bancoFound.charAt(0).toUpperCase() + bancoFound.slice(1) : prevData.banco) || '',
+          monto: (montoFound ? String(montoFound) : prevData.monto) || '',
+          fecha: (fechaFound || prevData.fecha) || '',
+          posibleCedula: (cedMatch ? cedMatch[1] : prevData.posibleCedula) || '',
+        };
+        try {
+          await update(chatEstRef, { estado: { ...(estadoActual as any), flow: activeFlow, reembolsoData: merged } });
+        } catch { /* best-effort */ }
+        const parts: string[] = [];
+        if (merged.cuenta20) parts.push(`cuenta=${merged.cuenta20}`);
+        if (merged.banco) parts.push(`banco=${merged.banco}`);
+        if (merged.telefono) parts.push(`teléfono=${merged.telefono}`);
+        if (merged.monto) parts.push(`monto=${merged.monto}`);
+        if (merged.fecha) parts.push(`fecha=${merged.fecha}`);
+        if (merged.posibleCedula) parts.push(`posible cédula/referencia=${merged.posibleCedula}`);
+        if (parts.length) {
+          datosRecibidosTxt =
+            `\n\nDATOS YA RECIBIDOS DEL USUARIO (NO volver a pedirlos, úsalos y confírmalos): ${parts.join(' | ')}. ` +
+            `Pide SOLO lo que falte de: nombre completo, cédula, teléfono, cuenta 20 dígitos, banco, ubicación, fecha/hora, referencia, monto. ` +
+            `Si el usuario corrige un dato, usa el ÚLTIMO valor.`;
+        }
+      } catch { /* best-effort */ }
     }
 
     // === 7. Generate AI response ===
@@ -1368,7 +1428,10 @@ Eso sí: para retirar el power bank, haz el proceso normal con tu depósito de g
     const basePrompt = SONIA_IDENTITY;
     const flowInstructions = getFlowPrompt(activeFlow);
     const recent = allMsgs.slice(-8).map(m => (m.sender === 'agent' ? 'A' : 'U') + ': ' + m.content).join('\n');
-    const fullPrompt = basePrompt + '\n\n' + flowInstructions + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + customMsgForAI;
+    // datosRecibidosTxt (tracker anti-redundancia) solo existe en reembolso;
+    // el recap final detallado que le gusta al CEO se mantiene intacto.
+    const antiRedundancia = (typeof datosRecibidosTxt !== 'undefined' && datosRecibidosTxt) ? datosRecibidosTxt : '';
+    const fullPrompt = basePrompt + '\n\n' + flowInstructions + antiRedundancia + '\n\nHistorial:\n' + recent + '\n\nUsuario: ' + customMsgForAI;
 
     console.log('[AI] Calling AI... (flow:', activeFlow + ')');
     const reply = await callAI(fullPrompt, 0.4);
