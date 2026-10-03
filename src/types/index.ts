@@ -5,6 +5,8 @@ export interface Message {
   sender: 'user' | 'agent';
   timestamp: number;
   status: 'sent' | 'delivered' | 'read';
+  mediaUrl?: string;
+  mediaType?: 'image' | 'sticker' | 'video' | 'audio' | 'document';
 }
 
 export interface Chat {

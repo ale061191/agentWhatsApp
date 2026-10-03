@@ -185,7 +185,23 @@ export default function ChatArea() {
                 marginLeft: msg.sender === 'user' ? '16px' : '0'
               }}
             >
-              <p className="text-[15px] leading-[19px]">{msg.content}</p>
+              {msg.mediaUrl && (msg.mediaType === 'image' || msg.mediaType === 'sticker') ? (
+                <div className="mb-2">
+                  <img 
+                    src={msg.mediaUrl} 
+                    alt="Imagen del usuario" 
+                    className="max-w-full rounded-lg cursor-pointer"
+                    style={{ maxHeight: '300px', objectFit: 'contain' }}
+                    onError={(e) => {
+                      // Si falla la carga, mostrar texto placeholder
+                      (e.target as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                </div>
+              ) : null}
+              {(msg.content && msg.content !== '[Imagen]') || (!msg.mediaUrl && msg.content === '[Imagen]') ? (
+                <p className="text-[15px] leading-[19px]">{msg.content}</p>
+              ) : null}
               <div className="flex items-center justify-end gap-[4px] mt-[4px]">
                 <span className="text-[11px] opacity-70">{formatTime(msg.timestamp)}</span>
                 {msg.sender === 'agent' && (
