@@ -192,7 +192,7 @@ export default function ChatArea() {
                     src={msg.mediaUrl ? msg.mediaUrl : `/api/media?id=${msg.id}&mediaId=${msg.mediaId || ''}`}
                     alt="Imagen del usuario" 
                     className="max-w-full rounded-lg cursor-pointer"
-                    style={{ maxHeight: '420px', objectFit: 'contain' }}
+                    style={{ maxHeight: '600px', objectFit: 'contain' }}
                     onClick={() => setSelectedImage(msg.mediaUrl ? msg.mediaUrl : `/api/media?id=${msg.id}&mediaId=${msg.mediaId || ''}`)}
                     onError={(e) => {
                       // Si falla la carga, mostrar texto placeholder
@@ -244,15 +244,15 @@ export default function ChatArea() {
       </div>
 
       {selectedImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setSelectedImage(null)}>
-          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90" onClick={() => setSelectedImage(null)}>
+          <div className="relative max-w-[95vw] max-h-[95vh]" onClick={(e) => e.stopPropagation()}>
             <button
-              className="absolute -top-10 right-0 text-white text-2xl"
+              className="absolute -top-12 right-0 text-white text-3xl hover:text-gray-300"
               onClick={() => setSelectedImage(null)}
             >
               ✕
             </button>
-            <img src={selectedImage} alt="Vista ampliada" className="max-w-full max-h-[90vh] rounded-lg" />
+            <img src={selectedImage} alt="Vista ampliada" className="max-w-full max-h-[95vh] w-auto h-auto rounded-lg" />
           </div>
         </div>
       )}
