@@ -197,13 +197,34 @@ export async function POST(req: NextRequest) {
       let mediaUrl: string | undefined;
       let mediaType: 'image' | 'sticker' | 'video' | 'audio' | 'document' | undefined;
       let mediaId: string | undefined;
-      if (isImage) {
-        mediaUrl = m.image?.url || m.media?.url || m.media?.link || (Array.isArray(m.media) && m.media[0]?.url);
-        mediaId = m.image?.id || m.media?.id || (Array.isArray(m.media) && m.media[0]?.id);
+
+      const extract = (obj: any, type: typeof mediaType) => {
+        if (!obj) return;
+        mediaId = obj.id;
+        // WHAPI envía link público si Auto Download está activo, y preview en base64
+        if (obj.link) mediaUrl = obj.link;
+        else if (obj.preview) {
+          // preview ya viene como data URL en los ejemplos de WHAPI
+          mediaUrl = obj.preview.startsWith('data:') ? obj.preview : `data:${obj.mime_type || 'image/jpeg'};base64,${obj.preview}`;
+        }
+        mediaType = type;
+      };
+
+      if (m.image) {
+        extract(m.image, 'image');
+      } else if (m.sticker) {
+        extract(m.sticker, 'sticker');
+      } else if (m.video) {
+        extract(m.video, 'video');
+      } else if (m.voice || m.audio) {
+        extract(m.voice || m.audio, 'audio');
+      } else if (m.document) {
+        extract(m.document, 'document');
+      } else if (isImage) {
+        // Fallback placeholder para imágenes sin payload de media
         mediaType = (mType === 'image' || mType === 'sticker') ? (mType as any) : 'image';
-        // Si no hay URL pero es imagen, mantenemos contenido placeholder
         if (!mediaUrl && mContent === '[Imagen]') {
-          mediaType = 'image';
+          mediaUrl = undefined;
         }
       }
 
