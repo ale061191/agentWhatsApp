@@ -201,12 +201,10 @@ export async function POST(req: NextRequest) {
       const extract = (obj: any, type: typeof mediaType) => {
         if (!obj) return;
         mediaId = obj.id;
-        // WHAPI envía link público si Auto Download está activo, y preview en base64
+        // Usar link público si Auto Download está activo. Si no hay link, no usar preview para evitar miniaturas de baja resolución.
+        // El UI caerá al proxy /api/media con mediaId para obtener la imagen completa desde WHAPI.
         if (obj.link) mediaUrl = obj.link;
-        else if (obj.preview) {
-          // preview ya viene como data URL en los ejemplos de WHAPI
-          mediaUrl = obj.preview.startsWith('data:') ? obj.preview : `data:${obj.mime_type || 'image/jpeg'};base64,${obj.preview}`;
-        }
+        // preview omitido intencionalmente para forzar resolución completa vía proxy
         mediaType = type;
       };
 
