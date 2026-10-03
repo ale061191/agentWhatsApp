@@ -27,6 +27,7 @@ export default function ChatArea() {
   const [inputValue, setInputValue] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const selectedChat = chats.find(c => c.id === selectedChatId);
   const chatMessages = selectedChatId ? allMessages[selectedChatId] || [] : [];
@@ -191,7 +192,8 @@ export default function ChatArea() {
                     src={msg.mediaUrl ? msg.mediaUrl : `/api/media?id=${msg.id}&mediaId=${msg.mediaId || ''}`}
                     alt="Imagen del usuario" 
                     className="max-w-full rounded-lg cursor-pointer"
-                    style={{ maxHeight: '300px', objectFit: 'contain' }}
+                    style={{ maxHeight: '420px', objectFit: 'contain' }}
+                    onClick={() => setSelectedImage(msg.mediaUrl ? msg.mediaUrl : `/api/media?id=${msg.id}&mediaId=${msg.mediaId || ''}`)}
                     onError={(e) => {
                       // Si falla la carga, mostrar texto placeholder
                       (e.target as HTMLImageElement).style.display = 'none';
@@ -240,6 +242,20 @@ export default function ChatArea() {
           </button>
         </div>
       </div>
+
+      {selectedImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setSelectedImage(null)}>
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+            <button
+              className="absolute -top-10 right-0 text-white text-2xl"
+              onClick={() => setSelectedImage(null)}
+            >
+              ✕
+            </button>
+            <img src={selectedImage} alt="Vista ampliada" className="max-w-full max-h-[90vh] rounded-lg" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
