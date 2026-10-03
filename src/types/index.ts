@@ -7,6 +7,7 @@ export interface Message {
   status: 'sent' | 'delivered' | 'read';
   mediaUrl?: string;
   mediaType?: 'image' | 'sticker' | 'video' | 'audio' | 'document';
+  mediaId?: string;
 }
 
 export interface Chat {

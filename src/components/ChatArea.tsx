@@ -185,10 +185,10 @@ export default function ChatArea() {
                 marginLeft: msg.sender === 'user' ? '16px' : '0'
               }}
             >
-              {msg.mediaUrl && (msg.mediaType === 'image' || msg.mediaType === 'sticker') ? (
+              {(msg.mediaUrl || msg.mediaId) && (msg.mediaType === 'image' || msg.mediaType === 'sticker') ? (
                 <div className="mb-2">
                   <img 
-                    src={msg.mediaUrl} 
+                    src={msg.mediaUrl ? msg.mediaUrl : `/api/media?id=${msg.id}&mediaId=${msg.mediaId || ''}`}
                     alt="Imagen del usuario" 
                     className="max-w-full rounded-lg cursor-pointer"
                     style={{ maxHeight: '300px', objectFit: 'contain' }}
@@ -199,7 +199,7 @@ export default function ChatArea() {
                   />
                 </div>
               ) : null}
-              {(msg.content && msg.content !== '[Imagen]') || (!msg.mediaUrl && msg.content === '[Imagen]') ? (
+              {(msg.content && msg.content !== '[Imagen]') || (!msg.mediaUrl && !msg.mediaId && msg.content === '[Imagen]') ? (
                 <p className="text-[15px] leading-[19px]">{msg.content}</p>
               ) : null}
               <div className="flex items-center justify-end gap-[4px] mt-[4px]">

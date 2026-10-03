@@ -196,8 +196,10 @@ export async function POST(req: NextRequest) {
       // Extraer URL de media si existe
       let mediaUrl: string | undefined;
       let mediaType: 'image' | 'sticker' | 'video' | 'audio' | 'document' | undefined;
+      let mediaId: string | undefined;
       if (isImage) {
         mediaUrl = m.image?.url || m.media?.url || m.media?.link || (Array.isArray(m.media) && m.media[0]?.url);
+        mediaId = m.image?.id || m.media?.id || (Array.isArray(m.media) && m.media[0]?.id);
         mediaType = (mType === 'image' || mType === 'sticker') ? (mType as any) : 'image';
         // Si no hay URL pero es imagen, mantenemos contenido placeholder
         if (!mediaUrl && mContent === '[Imagen]') {
@@ -209,7 +211,8 @@ export async function POST(req: NextRequest) {
         id: mId, chatId: mChatId, content: mContent || '[Imagen]',
         sender: 'user', timestamp: Date.now(), status: 'delivered',
         ...(mediaUrl && { mediaUrl }),
-        ...(mediaType && { mediaType })
+        ...(mediaType && { mediaType }),
+        ...(mediaId && { mediaId })
       };
       await set(ref(db, 'messages/' + mChatId + '/' + mId), msgData);
 
